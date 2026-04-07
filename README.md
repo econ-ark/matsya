@@ -34,7 +34,7 @@ is useful for CI, containers, or temporary use:
 
 ```bash
 export MATSYA_TOKEN="msy_a7f3b2e1c9d4e5f6a1b2c3d4e5f6a7b8"
-matsya "What is a stage?" --llm
+matsya "What is a stage?"
 ```
 
 To make it permanent, add the `export` line to your `~/.zshrc` or
@@ -51,7 +51,7 @@ token = "msy_a7f3b2e1c9d4e5f6a1b2c3d4e5f6a7b8"
 ### Verify
 
 ```bash
-matsya "What is a stage?" --llm
+matsya "What is a stage?"
 ```
 
 If you see an answer, you're set. If you get an authentication error,
@@ -61,21 +61,21 @@ revoked.
 ## CLI usage
 
 ```bash
-# Vector search only (no LLM)
+# Ask a question (LLM answer is the default)
 matsya "What is a stage?"
 
-# Search + LLM answer
-matsya "What is a stage?" --llm
-
 # BST boost with extended thinking
-matsya "explain growth impatience" --BST --llm
+matsya "explain growth impatience" --BST
 
 # Stateful session (multi-turn conversation)
-matsya "Write cons_stage YAML" --llm --session my-model
-matsya "Now add portfolio choice" --llm --session my-model
+matsya "Write cons_stage YAML" --session my-model
+matsya "Now add portfolio choice" --session my-model
 
 # YAML↔MDP refinement
-matsya "Write cons_stage YAML" --llm --refine
+matsya "Write cons_stage YAML" --refine
+
+# Raw vector search only (no LLM call)
+matsya "What is a stage?" --no-llm
 
 # Session management
 matsya sessions                           # list sessions
@@ -109,7 +109,8 @@ for turn in session_history("my-model"):
     print(f"A: {turn['answer'][:200]}...")
 ```
 
-The Python API defaults to `llm=True`.
+The Python API defaults to `llm=True`. The CLI also defaults to LLM —
+use `--no-llm` for raw vector search results.
 
 ## Using your own Anthropic API key (optional)
 

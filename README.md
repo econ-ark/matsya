@@ -60,26 +60,62 @@ revoked.
 
 ## CLI usage
 
+Matsya has two primary modes:
+
+### Mode 1: Translate (YAML ↔ formal MDP)
+
+Convert between dolo-plus stage YAML and formal mathematical MDP
+writeups. Use this when formalizing a model or checking that your
+YAML expresses the Bellman problem you intend.
+
 ```bash
-# Ask a question (LLM answer is the default)
-matsya "What is a stage?"
+# Model description → dolo-plus YAML
+matsya "Write the dolo-plus YAML for a consumption-savings stage with IID shocks"
 
-# BST boost with extended thinking
-matsya "explain growth impatience" --BST
+# YAML → formal MDP (paste your YAML in the query)
+matsya "Translate this stage to a formal MDP:
+name: cons_stage
+symbols:
+  states:
+    m: '@in R++'
+  controls:
+    c: '@in R++'
+..."
 
-# Stateful session (multi-turn conversation)
+# Round-trip refinement: YAML → MDP → YAML until convergence
+matsya "Write cons_stage YAML" --refine
+```
+
+### Mode 2: Dynamic programming theory and DDSL syntax
+
+Ask questions about Bellman calculus, DDSL concepts, dolo-plus syntax,
+perch/stage/period structure, or the research literature indexed in
+the RAG.
+
+```bash
+# Theory questions
+matsya "What is a stage in DDSL?"
+matsya "How do periods compose stages?"
+matsya "Explain information sets at each perch"
+
+# BufferStockTheory (Carroll) — boost BST content + extended thinking
+matsya "Explain growth impatience and its relation to DDSL" --BST
+matsya "What are the GIC and RIC convergence conditions?" --BST
+```
+
+### Sessions and other options
+
+```bash
+# Stateful session (multi-turn model development)
 matsya "Write cons_stage YAML" --session my-model
 matsya "Now add portfolio choice" --session my-model
-
-# YAML↔MDP refinement
-matsya "Write cons_stage YAML" --refine
-
-# Raw vector search only (no LLM call)
-matsya "What is a stage?" --no-llm
 
 # Session management
 matsya sessions                           # list sessions
 matsya sessions --show my-model           # view session history
+
+# Raw vector search only (no LLM call)
+matsya "What is a stage?" --no-llm
 ```
 
 ## Python API

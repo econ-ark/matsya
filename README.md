@@ -4,10 +4,11 @@ Research copilot for modular dynamic programming. Helps formulate
 modular DP problems from papers and notes, grounded in the Bellman-DDSL
 knowledge base.
 
-Matsya's knowledge base includes the DDSL specification and dolo-plus
-syntax, Sargent & Stachurski's DP textbook, category-theoretic
-foundations, canonical stage YAMLs and formal MDPs, Carroll's
-BufferStockTheory, and SolvingMicroDSOPs lecture notes.
+Matsya's knowledge base covers the DDSL specification and dolo-plus
+syntax, dynamic programming theory and textbooks, category-theoretic
+foundations, canonical stage examples and formal MDPs, research papers
+on precautionary saving and buffer stock theory, and pedagogical
+lecture notes on solving dynamic optimization problems.
 
 The main workflow is: paste an excerpt from a paper, then iterate with Matsya
 to identify states/controls/shocks/timing and write down a clean modular DP /

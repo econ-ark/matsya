@@ -173,6 +173,19 @@ for turn in session_history("my-model"):
 The Python API generates answers by default. The CLI also defaults to LLM —
 use `--no-llm` for raw search results only.
 
+## Tips for getting good responses
+
+Sometimes matsya will respond with dolo-plus YAML syntax for a problem
+you're discussing. If your objective is to mathematically formulate the
+problem rather than get code, tell matsya explicitly: "please return the
+mathematical model in modular-DDSL notation" — this will produce a
+formal writeup using perch tags ([<]/[~]/[>]) and operator composition
+rather than YAML.
+
+Matsya responds best to short, focused queries. Don't paste in whole
+papers or large blocks of code. Instead, break the work into specific
+questions and use sessions to maintain context across turns.
+
 ## Response times
 
 | Query type | Typical wait |

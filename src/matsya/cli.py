@@ -335,17 +335,66 @@ def _do_refine(
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="matsya",
-        description="Query the Bellman-DDSL / Econ-ARK RAG system",
+        description="Matsya — research copilot for modular dynamic programming.",
         epilog=textwrap.dedent("""\
-            examples:
+            WHAT MATSYA IS
+              A specialist oracle for modular dynamic programming, grounded
+              in a curated knowledge base of DDSL theory, dolo-plus syntax,
+              DP textbooks, canonical stage examples, formal MDPs, and
+              research papers (including BufferStockTheory).
+
+              Matsya is NOT a general-purpose chat or coding tool. Use it
+              alongside a local coding agent (Claude Code, Cursor, etc.) —
+              the local agent handles implementation, matsya provides the
+              DP domain knowledge.
+
+            TWO MODES
+              1. Translate: convert between dolo-plus YAML and formal MDPs
+                 matsya "Write the dolo-plus YAML for a consumption-savings stage"
+                 matsya "Translate this stage YAML to a formal MDP: ..."
+
+              2. Theory Q&A: ask about DP theory, DDSL concepts, perch/stage
+                 structure, convergence conditions, or the indexed literature
+                 matsya "What is a stage in DDSL?"
+                 matsya "How do periods compose stages?"
+
+            SESSIONS (multi-turn model development)
+              Use --session to maintain context across queries:
+                 matsya "Write cons_stage YAML" --session my-model
+                 matsya "Now add portfolio choice" --session my-model
+                 matsya sessions                    # list sessions
+                 matsya sessions --show my-model    # view history
+
+            NOTATION
+              Matsya understands standard economics notation and modular-DDSL
+              perch notation (prec/succ subscripts, operator composition).
+              By default it uses whatever feels natural. To get strict
+              modular-DDSL notation, add "please write your response using
+              modular-DDSL notation" to your query. This produces:
+                spaces:    X_prec, X, X_succ (sans-serif)
+                elements:  x_prec, x, x_succ (italic)
+                functions: v, g, r (upright roman)
+                operators: B, I, T = I . B (blackboard bold)
+
+            TIPS
+              - Short, focused queries work best. Don't paste whole papers.
+              - Break big questions into session turns.
+              - Use --BST to surface BufferStockTheory content.
+              - Use --no-llm for raw vector search (fast, no LLM cost).
+
+            SETUP
+              matsya configure          # paste your access token (one time)
+              export MATSYA_TOKEN=...   # alternative: env variable
+
+            EXAMPLES
               matsya "What is a stage?"
-              matsya "Write cons_stage YAML" --llm
-              matsya "explain growth impatience" --BST --llm
-              matsya "Write cons_stage" --llm --session my-model
-              matsya "cons-savings IID" --llm --refine
-              matsya sessions
+              matsya "explain growth impatience" --BST
+              matsya "Write cons_stage YAML" --session my-model
+              matsya "cons-savings IID" --refine
               matsya sessions --show my-model
               matsya configure
+
+            Full docs: https://github.com/econ-ark/matsya
         """),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

@@ -227,10 +227,13 @@ def _handle_query(args: argparse.Namespace) -> None:
 
     boost = boost_dict or None
 
+    # --no-llm overrides the default --llm=True
+    use_llm = args.llm and not args.no_llm
+
     try:
         if args.refine:
             _do_refine(client, args, boost)
-        elif args.llm:
+        elif use_llm:
             _do_chat(client, args, boost)
         else:
             _do_search(client, args, boost)
@@ -352,8 +355,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Your question or search query (or 'configure' / 'sessions')",
     )
     parser.add_argument(
-        "--llm", action="store_true",
-        help="Generate an LLM answer from retrieved context",
+        "--llm", action="store_true", default=True,
+        help="Generate an LLM answer (default: on). Use --no-llm for raw search.",
+    )
+    parser.add_argument(
+        "--no-llm", action="store_true",
+        help="Return raw vector search results without calling an LLM",
     )
     parser.add_argument(
         "--model", default=DEFAULT_MODEL,

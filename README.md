@@ -17,6 +17,16 @@ The main workflow is: paste an excerpt from a paper, then iterate with Matsya
 to identify states/controls/shocks/timing and write down a clean modular DP /
 Bellman equation representation.
 
+> **Matsya as a specialist oracle, not the main agent.** The typical
+> use case is not "talk to Matsya all day." It's: you're working in a
+> repo with a local coding agent (Claude Code, Cursor, etc.) that
+> handles implementation. When the agent — or you — hits a question
+> about DDSL theory, dolo-plus syntax, stage decomposition, or
+> convergence conditions, you call matsya for a grounded answer and
+> bring that back into the local session. Matsya provides the DP
+> domain knowledge; your local agent does the coding. Think of it as
+> a specialist you consult, not a general-purpose assistant.
+
 ## Install
 
 ```bash

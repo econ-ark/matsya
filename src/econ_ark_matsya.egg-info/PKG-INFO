@@ -1,0 +1,5 @@
+Metadata-Version: 2.4
+Name: econ-ark-matsya
+Version: 0.1.0
+Summary: CLI and Python API for the Matsya research RAG
+Requires-Python: >=3.11

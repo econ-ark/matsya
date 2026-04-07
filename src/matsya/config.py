@@ -9,10 +9,34 @@ Reads token and server URL from:
 from __future__ import annotations
 
 import os
-import tomllib
 from pathlib import Path
 
+try:
+    import tomllib  # Python 3.11+
+except ModuleNotFoundError:
+    tomllib = None  # type: ignore[assignment]
+
 DEFAULT_SERVER = "http://45.55.225.169:8700"
+
+
+def _read_toml(path: Path) -> dict:
+    """Read a simple key = "value" TOML file. Uses tomllib on 3.11+,
+    falls back to a minimal line parser on 3.10."""
+    if tomllib is not None:
+        with open(path, "rb") as f:
+            return tomllib.load(f)
+    # Minimal fallback: handles token = "..." and server = "..."
+    result = {}
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            result[key] = val
+    return result
 CONFIG_DIR = Path.home() / ".config" / "matsya"
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 
@@ -22,8 +46,7 @@ def load_config() -> dict[str, str]:
     cfg: dict[str, str] = {"token": "", "server": DEFAULT_SERVER}
 
     if CONFIG_FILE.exists():
-        with open(CONFIG_FILE, "rb") as f:
-            file_cfg = tomllib.load(f)
+        file_cfg = _read_toml(CONFIG_FILE)
         if "token" in file_cfg:
             cfg["token"] = str(file_cfg["token"])
         if "server" in file_cfg:

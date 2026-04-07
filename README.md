@@ -173,6 +173,21 @@ for turn in session_history("my-model"):
 The Python API generates answers by default. The CLI also defaults to LLM —
 use `--no-llm` for raw search results only.
 
+## Response times
+
+| Query type | Typical wait |
+|---|---|
+| Simple theory question | 10-15 seconds |
+| YAML translation or formal MDP | 15-30 seconds |
+| `--BST` (extended thinking) | 20-40 seconds |
+| `--refine` (multi-round) | 1-3 minutes |
+| `--no-llm` (raw search only) | 1-2 seconds |
+
+Most of the wait is the LLM generating the answer — the vector search
+itself takes under a second. Longer or more complex questions produce
+longer answers and take more time. If a query seems stuck, wait up to
+2 minutes before assuming something is wrong.
+
 ## Using your own Anthropic API key (optional)
 
 By default, Matsya uses the project's shared Anthropic key on the server.

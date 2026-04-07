@@ -179,7 +179,8 @@ Sometimes matsya will respond with dolo-plus YAML syntax for a problem
 you're discussing. If your objective is to mathematically formulate the
 problem rather than get code, tell matsya explicitly: "please return the
 mathematical model in modular-DDSL notation" — this will produce a
-formal writeup using perch tags ([<]/[~]/[>]) and operator composition
+formal writeup using subscript perch notation ($x_{\prec}$, $x$,
+$x_{\succ}$ for arrival/decision/continuation) and operator composition
 rather than YAML.
 
 Matsya responds best to short, focused queries. Don't paste in whole

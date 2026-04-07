@@ -16,7 +16,7 @@ Bellman equation representation.
 ## Install
 
 ```bash
-pip install econ-ark-matsya
+pip install git+https://github.com/econ-ark/matsya.git
 ```
 
 Requires Python >= 3.11. Zero external dependencies.

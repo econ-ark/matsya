@@ -21,7 +21,7 @@ Bellman equation representation.
 > use case is not "talk to Matsya all day." It's: you're working in a
 > repo with a local coding agent (Claude Code, Cursor, etc.) that
 > handles implementation. When the agent — or you — hits a question
-> about DDSL theory, dolo-plus syntax, stage decomposition, or
+> about modular dynamic programming theory, dolo-plus syntax, stage decomposition, or
 > convergence conditions, you call matsya for a grounded answer and
 > bring that back into the local session. Matsya provides the DP
 > domain knowledge; your local agent does the coding. Think of it as

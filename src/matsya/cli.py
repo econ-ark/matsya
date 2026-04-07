@@ -229,6 +229,8 @@ def _handle_query(args: argparse.Namespace) -> None:
 
     # --no-llm overrides the default --llm=True
     use_llm = args.llm and not args.no_llm
+    # --no-think overrides the default --think=True
+    args.think = args.think and not args.no_think
 
     try:
         if args.refine:
@@ -391,8 +393,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Balanced retrieval across indexed repos",
     )
     parser.add_argument(
-        "--think", action="store_true",
-        help="Enable extended thinking (Claude only). Forces temperature=1.",
+        "--think", action="store_true", default=True,
+        help="Extended thinking is on by default. Use --no-think to disable.",
+    )
+    parser.add_argument(
+        "--no-think", action="store_true",
+        help="Disable extended thinking.",
     )
     parser.add_argument(
         "--temperature", type=float, default=DEFAULT_TEMPERATURE,

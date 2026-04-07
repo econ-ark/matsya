@@ -187,6 +187,14 @@ Matsya responds best to short, focused queries. Don't paste in whole
 papers or large blocks of code. Instead, break the work into specific
 questions and use sessions to maintain context across turns.
 
+When working in a repo with a local AI agent (Claude Code, Cursor, etc.),
+use matsya as the specialist — not the main agent. Your local agent handles
+implementation and code; matsya handles the DP theory. For example, tell
+your local agent: "ask matsya about pages 5-6 of the paper — what does
+the income process mean in terms of information sets in the model?" The
+local agent can call matsya via the Python API and incorporate the answer
+into its work.
+
 ## Response times
 
 | Query type | Typical wait |

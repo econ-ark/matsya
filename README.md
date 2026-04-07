@@ -1,5 +1,8 @@
 # Matsya
 
+> **This is a research development version.** Interfaces, features, and
+> the knowledge base may change without notice.
+
 Research copilot for modular dynamic programming. Helps formulate
 modular DP problems from papers and notes, grounded in the Bellman-DDSL
 knowledge base.

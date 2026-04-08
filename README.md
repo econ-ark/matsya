@@ -9,11 +9,7 @@ Also performs one to one translations between dolo-plus YAML and formal modular 
 
 Matsya's knowledge base covers the dolo-plus
 syntax and specification, dynamic programming theory, category-theoretic
-foundations of modular dynamic programmings, canonical stage examples and formal MDPs, key research papers
-and
-syntactic trees theorems on solving and expressing dynamic optimization problems.
-
-
+foundations of modular dynamic programmings and canonical examples.
 
 The main workflow is: paste an excerpt from a paper, then iterate with Matsya
 to identify states/controls/shocks/timing and write down a clean modular DP /

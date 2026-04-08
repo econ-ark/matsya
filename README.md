@@ -3,15 +3,17 @@
 > **This is a research development version.** Interfaces, features, and
 > the knowledge base may change without notice.
 
-Research copilot for modular dynamic programming. Helps formulate
-modular DP problems from papers and notes, grounded in the Bellman-DDSL
-knowledge base.
+Mathematical and theoretical copilot for modular dynamic programming problems. 
+Helps formulate and interpret *rigorous* modular DP problems from less formal notation in papers, notes, rough model ideas and prompts. 
+Also performs one to one translations between dolo-plus YAML and formal modular DP problems (written using modular Bellman notation).
 
-Matsya's knowledge base covers the DDSL specification and dolo-plus
-syntax, dynamic programming theory and textbooks, category-theoretic
-foundations, canonical stage examples and formal MDPs, research papers
-on precautionary saving and buffer stock theory, and pedagogical
-lecture notes on solving dynamic optimization problems.
+Matsya's knowledge base covers the dolo-plus
+syntax and specification, dynamic programming theory, category-theoretic
+foundations of modular dynamic programmings, canonical stage examples and formal MDPs, key research papers
+and
+syntactic trees theorems on solving and expressing dynamic optimization problems.
+
+
 
 The main workflow is: paste an excerpt from a paper, then iterate with Matsya
 to identify states/controls/shocks/timing and write down a clean modular DP /
@@ -234,6 +236,11 @@ the duration of the LLM call and then discarded.
 You still need a Matsya access token (`msy_...`) even when using your
 own Anthropic key — the Matsya token controls access to the service,
 the Anthropic key controls which billing account the LLM call charges.
+
+If your Anthropic key runs out of credits or has an error, matsya will
+automatically fall back to the shared project key and append a notice
+to the response letting you know. You don't need to do anything — the
+query still works, it just charges the shared key instead.
 
 ## Data logging and consent
 

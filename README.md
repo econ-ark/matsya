@@ -202,11 +202,29 @@ into its work.
 | `--BST` (extended thinking) | 20-40 seconds |
 | `--refine` (multi-round) | 1-3 minutes |
 | `--no-llm` (raw search only) | 1-2 seconds |
+| Large session history (> 50 KB) | 1-3 minutes |
+| Very large prompts (> 80 KB) | **up to 10 minutes** |
 
 Most of the wait is the LLM generating the answer — the vector search
 itself takes under a second. Longer or more complex questions produce
-longer answers and take more time. If a query seems stuck, wait up to
-2 minutes before assuming something is wrong.
+longer answers and take more time.
+
+## Context size limits
+
+Matsya keeps full session history in its log but compresses prior
+turns before sending them to Claude. The server applies two thresholds
+to the compressed prompt:
+
+| Size | Behaviour |
+|---|---|
+| Under 80 KB | Normal |
+| 80 KB – 200 KB | Warning prepended to the answer. Wait time can be up to 10 minutes. |
+| Over 200 KB | Fast 413 error — shorten the current query |
+
+If you hit the 200 KB limit, the current query itself is usually the
+cause (prior turns are already auto-compressed). Paste a shorter
+excerpt, summarise in your own words, or split into multiple
+smaller turns.
 
 ## Using your own Anthropic API key (optional)
 

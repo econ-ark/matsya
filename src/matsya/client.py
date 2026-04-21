@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
-from typing import Any
+from typing import Any, cast
 
-_TIMEOUT = 300  # LLM calls can be slow
+_TIMEOUT = 320  # LLM calls can be slow (server kills at 300s)
 
 
 class MatsyaError(Exception):
@@ -32,6 +33,10 @@ class RateLimitError(MatsyaError):
 
 class ServerError(MatsyaError):
     """Raised on 5xx server errors."""
+
+
+class ContextTooLargeError(MatsyaError):
+    """Raised on 413 — prompt too large for the server to process."""
 
 
 class MatsyaClient:
@@ -65,7 +70,7 @@ class MatsyaClient:
         method: str,
         path: str,
         body: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> Any:
         """Issue an HTTP request and return parsed JSON."""
         url = f"{self.server_url}{path}"
         headers: dict[str, str] = {
@@ -112,6 +117,11 @@ class MatsyaClient:
                 "Authentication failed — check that your Matsya token is "
                 "valid and has not been revoked.\n"
                 "Run `matsya configure` to set a new token."
+            ) from exc
+
+        if exc.code == 413:
+            raise ContextTooLargeError(
+                f"Context too large:\n\n{detail}"
             ) from exc
 
         if exc.code == 429:
@@ -207,7 +217,7 @@ class MatsyaClient:
         }
         if boost:
             payload["boost"] = boost
-        path = f"/sessions/{urllib.request.quote(session_name, safe='')}/chat"
+        path = f"/sessions/{urllib.parse.quote(session_name, safe='')}/chat"
         return self._request("POST", path, payload)
 
     def refine(
@@ -233,9 +243,9 @@ class MatsyaClient:
 
     def list_sessions(self) -> list[dict[str, Any]]:
         """Return the authenticated principal's sessions."""
-        return self._request("GET", "/sessions")
+        return cast(list[dict[str, Any]], self._request("GET", "/sessions"))
 
     def get_session(self, name: str) -> dict[str, Any]:
         """Return the full Q&A history for a named session."""
-        path = f"/sessions/{urllib.request.quote(name, safe='')}"
+        path = f"/sessions/{urllib.parse.quote(name, safe='')}"
         return self._request("GET", path)

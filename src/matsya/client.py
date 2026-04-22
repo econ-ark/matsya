@@ -12,7 +12,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, cast
 
-_TIMEOUT = 320  # LLM calls can be slow (server kills at 300s)
+_TIMEOUT = 620  # LLM calls can be slow (server kills at 600s / 10 min)
 
 
 class MatsyaError(Exception):
@@ -173,7 +173,7 @@ class MatsyaClient:
         messages: list[dict[str, str]],
         k: int = 15,
         group: str = "Bellman-DDSL",
-        model: str = "claude-opus-4-6",
+        model: str = "claude-opus-4-7",
         boost: dict[str, float] | None = None,
         balanced: bool = False,
         think: bool = False,
@@ -199,7 +199,7 @@ class MatsyaClient:
         query: str,
         k: int = 15,
         group: str = "Bellman-DDSL",
-        model: str = "claude-opus-4-6",
+        model: str = "claude-opus-4-7",
         boost: dict[str, float] | None = None,
         think: bool = False,
         temperature: float = 0.2,
@@ -225,7 +225,7 @@ class MatsyaClient:
         query: str,
         k: int = 15,
         group: str = "Bellman-DDSL",
-        model: str = "claude-opus-4-6",
+        model: str = "claude-opus-4-7",
         max_iter: int = 3,
         session: str | None = None,
     ) -> dict[str, Any]:

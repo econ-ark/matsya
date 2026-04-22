@@ -45,7 +45,7 @@ def ask(
     boost: dict[str, float] | None = None,
     k: int = 15,
     group: str = "Bellman-DDSL",
-    model: str = "claude-opus-4-6",
+    model: str = "claude-opus-4-7",
     think: bool = False,
     temperature: float = 0.2,
     context_turns: int = 5,

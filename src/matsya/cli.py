@@ -13,6 +13,7 @@ from typing import Any, NoReturn
 
 from matsya.client import (
     AuthenticationError,
+    ContextTooLargeError,
     MatsyaClient,
     MatsyaError,
     RateLimitError,
@@ -20,7 +21,7 @@ from matsya.client import (
 from matsya.config import load_config, save_config
 
 DEFAULT_K = 15
-DEFAULT_MODEL = "claude-opus-4-6"
+DEFAULT_MODEL = "claude-opus-4-7"
 DEFAULT_GROUP = "Bellman-DDSL"
 DEFAULT_TEMPERATURE = 0.2
 RESULT_TEXT_LIMIT = 1000
@@ -244,6 +245,9 @@ def _handle_query(args: argparse.Namespace) -> None:
         sys.exit(1)
     except RateLimitError as exc:
         print(f"\n{exc}", file=sys.stderr)
+        sys.exit(1)
+    except ContextTooLargeError as exc:
+        print(f"\n⚠️  {exc}", file=sys.stderr)
         sys.exit(1)
     except MatsyaError as exc:
         print(f"\nError: {exc}", file=sys.stderr)

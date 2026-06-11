@@ -21,7 +21,11 @@ from matsya.client import (
 from matsya.config import load_config, save_config
 
 DEFAULT_K = 15
-DEFAULT_MODEL = "claude-opus-4-7"
+DEFAULT_MODEL = "claude-fable-5"
+MODEL_ALIASES = {
+    "fable": "claude-fable-5",
+    "fable5": "claude-fable-5",
+}
 DEFAULT_GROUP = "Bellman-DDSL"
 DEFAULT_TEMPERATURE = 0.2
 RESULT_TEXT_LIMIT = 1000
@@ -419,7 +423,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--model", default=DEFAULT_MODEL,
-        help=f"LLM model for --llm (default: {DEFAULT_MODEL})",
+        help=(
+            f"LLM model for --llm (default: {DEFAULT_MODEL}). "
+            "Aliases: fable, fable5"
+        ),
     )
     parser.add_argument(
         "--k", type=int, default=DEFAULT_K,
@@ -499,6 +506,8 @@ def main() -> NoReturn | None:
     if not args.query:
         parser.print_help()
         sys.exit(0)
+
+    args.model = MODEL_ALIASES.get(args.model, args.model)
 
     _handle_query(args)
 

@@ -37,7 +37,7 @@ Enter your Matsya token:
 Paste the Matsya token after the colon, exactly as you received it, and press Enter. If what you pasted does not begin with `msy_`, the command stops with the sentence `Error: a Matsya token begins with msy_. Check the Matsya token you received and try again.`, and you type `matsya configure` once more. Otherwise it asks for the address:
 
 ```
-Enter the service address supplied by AAS:
+Enter the service address supplied by Econ-ARK-admin:
 ```
 
 Paste the address and press Enter. The command then prints where it saved the two,
@@ -52,7 +52,13 @@ To check, type `matsya index` and press Enter. When the service accepts you, it 
 
 ## 3 Let your assistant work with Matsya
 
-Most of the work is done for you by a coding assistant such as Claude Code. Open the folder that holds your model's description in the assistant, and tell it, in your own words, to read the Matsya user guide and to use the `matsya` command for you. The guide is at <https://econ-ark.github.io/bellman/matsya/user-guide/>, and the same pages are installed with the command and stand in the folder `docs/` of this repository; they tell the assistant what Matsya does, which commands exist, what each prints, and where the files it writes are kept. Typed alone, `matsya` prints an orientation, which says what Matsya is, where the guide is installed on your machine and whether your Matsya token is saved, and `matsya docs` prints the guide itself. From then on you describe what you want, a declaration built from your description, a question about the result, a change to the model, and the assistant runs the commands.
+You do not need to learn the commands. A coding assistant such as Claude Code runs them for you.
+
+1. Open the folder that holds your model's description in the assistant.
+2. Tell the assistant: "Read the Matsya guide by running `matsya docs --all`, then use the `matsya` command for me."
+3. Say what you want in your own words: "build the model from my description", "what did the judges disagree on", "change the borrowing constraint and build again".
+
+The assistant reads the guide, which is installed with the command, and runs the commands. The same guide is online at <https://econ-ark.github.io/bellman/matsya/user-guide/>.
 
 ## 4 Or run the commands yourself
 

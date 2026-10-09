@@ -11,7 +11,7 @@ import pytest
 
 CLIENT = Path(__file__).resolve().parents[1]
 DOCS = CLIENT / "docs"
-SOURCE = CLIENT.parents[1] / "docs" / "matsya" / "user-guide"
+SOURCE = CLIENT.parents[2] / "docs" / "matsya" / "user-guide"
 
 
 def test_the_pages_are_installed_with_the_package() -> None:

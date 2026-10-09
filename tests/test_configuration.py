@@ -50,7 +50,8 @@ class ClientConfigurationTests(unittest.TestCase):
 
     def test_configure_saves_explicit_address_without_network(self):
         with patch("builtins.input", side_effect=["msy_test", "https://service.example.invalid"]):
-            with patch("builtins.print"), patch("urllib.request.urlopen") as network:
+            # the client's opener and `urlopen` both send through `OpenerDirector.open`
+            with patch("builtins.print"), patch("urllib.request.OpenerDirector.open") as network:
                 cli._run_configure()
         network.assert_not_called()
         self.assertEqual(config.load_config()["server"], "https://service.example.invalid")
@@ -67,7 +68,7 @@ class ClientConfigurationTests(unittest.TestCase):
             client.index()
             client.search("states")
             client.passage("p1")
-            client.submit_job(source_text="A household saves.")
+            client.submit_job(source_text="A household saves.", target="stage")
             client.job("j1")
             client.wait_job("j1", interval=0)
             client.cancel_job("j1")

@@ -85,7 +85,7 @@ The service answers a refused request with one field, `{"detail": "<a sentence>"
 | 403 | A search or an answer names a collection that your Matsya token is not granted; the sentence is `Collection access is not granted` ([Collections and weights](01d-collections-and-weights.md) §2). |
 | 404 | The session, job, turn or passage does not exist or is not yours; the service does not distinguish the two cases. A passage also receives 404 when your Matsya token may not read its collection, or when the service no longer keeps the version of the index that the request names. A question also receives 404 when the service offers no turns of conversation mode, or when it keeps no version of the index with the digest the question names. |
 | 409 | A cancellation names a job that has ended; the sentence is `The job has ended`. |
-| 413 | The body exceeds the route's limit (§2), or a paper's PDF exceeds 16 MiB. |
+| 413 | The body exceeds the route's limit (§2). |
 | 415 | A body was sent without the header `Content-Type: application/json`. |
 | 422 | The request is malformed: a field that the route does not know, a value outside its range, a view other than `products` or `full`, or an entry, a selection or a job that the session cannot hold, such as a reply that names an entry that is not a question. |
 | 503 | The service cannot read its database of Matsya tokens, or holds no retrieval index. Report the route and the answer to the administrator. |
@@ -131,20 +131,22 @@ A job's request is one JSON object with a source and, optionally, the fields tha
 
 | Field | What it gives |
 |---|---|
-| `source` | the source material, in one of three forms: `{"kind": "description", "text": "…"}`, a model's description in prose and displayed equations; `{"kind": "paper", "pages": [{"page": 1, "text": "…"}, …]}`, a paper as the texts of its pages, numbered by positive, increasing integers; or `{"kind": "paper", "pdf_base64": "…"}`, a paper's PDF file of at most 16 MiB in base64, the encoding of a file's bytes as text, from which the service extracts the text of each page |
+| `source` | the source material, in one of two forms: `{"kind": "description", "text": "…"}`, a model's description in prose and displayed equations, or `{"kind": "paper", "text": "…"}`, a paper as its text in Markdown or LaTeX; a paper sent as numbered pages or as a PDF is refused with 422 and the sentence `A paper is sent as text: source.text holds the paper in Markdown or LaTeX` |
 | `session` | in place of `source`, the identifier of a session, whose text the job reads when it starts (§6) |
 | `max_cycles` | the most cycles of writing and checking: a positive integer, by default the configuration's cycle limit, three at present, and at most the configuration's maximum, five at present |
 | `force` | `true` sends the job on to writing when preparation, the step of the Model-prose-writer, ends with questions, which then stand in its record; without it, such a job ends `needs_input` |
 | `starting_declaration` | files that the first cycle checks in place of the first writing by Prose-to-Bellman-Sym: an object that maps file names, `<name>.bl` for a stage file, `period.yml`, `trellis.yml` or `note.md`, to the files' texts; files that the elaborator, the program that checks stage files, refuses go back to Prose-to-Bellman-Sym for repair |
-| `target_formulation` | a sentence of at most 500 characters that names the one formulation to write, when the source states several |
+| `target` | required: the level of the declaration the job writes, one of `stage`, `period`, `trellis` and `recipe` ([The roles of Matsya and when to use them](01b-the-roles-and-when-to-use-them.md) says what each holds); a request without it, or with another word, is refused with `target must be stage, period, trellis or recipe` |
+| `formulation` | a sentence of at most 500 characters that names the one formulation to write, when the source states several |
 | `model_key`, `source_cluster` | two labels in lowercase letters, digits and hyphens, sent together, that name the groups of indexed sources the job must not read ([Collections and weights](01d-collections-and-weights.md) §6) |
 
-A request that holds both `source` and `session`, or neither, or a field outside this table, is refused with 422. The source's text, a paper's included, is sent to the language-model provider, so ask the service's administrator before you submit a paper that may not leave your machine. Text that the service extracts from a PDF can lose mathematics; the form with page texts that you have checked avoids that loss.
+A request that holds both `source` and `session`, or neither, or a field outside this table, is refused with 422. The source's text, a paper's included, is sent to the language-model provider, so ask the service's administrator before you submit a paper that may not leave your machine. A PDF is converted to Markdown or LaTeX before it is sent.
 
 Write the request into a file, `request.json`:
 
 ```json
 {
+  "target": "stage",
   "source": {
     "kind": "description",
     "text": "A household lives forever with discount factor beta. It holds cash on hand m. It consumes c in [0, m] and saves a = m - c. Next period m = R a + y, with y iid lognormal, mean one, standard deviation sigma. Utility is CRRA with risk aversion rho. It maximizes expected discounted utility."
@@ -168,7 +170,7 @@ The answer, with the status 202, gives the job's identifier and the route of its
 {"id":"<job>","state":"queued","status_url":"/v1/model-iterations/<job>"}
 ```
 
-`matsya job submit model.md --no-session --max-cycles 1` sends the same request for the description kept in the file `model.md`. Without `--no-session`, the command first creates a session, appends the file's text to it and starts the job from the session (§6).
+`matsya job submit model.md --target stage --no-session --max-cycles 1` sends the same request for the description kept in the file `model.md`. Without `--no-session`, the command first creates a session, appends the file's text to it and starts the job from the session (§6).
 
 The job is read from its route:
 
@@ -177,7 +179,7 @@ curl --fail-with-body -sS "$MATSYA_SERVER/v1/model-iterations/<job>" \
   -H "Authorization: Bearer $MATSYA_TOKEN"
 ```
 
-The answer holds the job's `state`: `queued`, `running`, and at its end `converged`, `not_converged`, `needs_input`, `cancelled`, `failed` or `interrupted`. It holds the job's `label`, whose `text` names the session, the version of the session's text the job read, the job's number in the session and its state, such as `a household · version 1 · job 1 · running`, and is the state alone for a job of no session; `cancel_requested`, whether you asked to cancel the job; `progress`, the step the job has reached, `preparation`, `writing`, `prose_writing`, `judging` or `reconstruction`, with its cycle; and `events`, the records of the job's calls of language models, each with the role called, the size and digest of its message, the counts of **language-model tokens**, the pieces of text that the provider of the language model counts and charges for, and any failure, but no text. A job of a session also holds `session`; once it has started, `revision` and `entry_numbers`, the version of the text it read and the numbers of the entries it read; and at its end `current`, whether the text stayed at that version while it ran. A job that matsya-master started at your request names that turn under `started_by`.
+The answer holds the job's `state`: `queued`, `running`, and at its end `converged`, `not_converged`, `needs_input`, `cancelled`, `failed` or `interrupted`. It holds the job's `label`, whose `text` names the session, the target, the version of the session's text the job read, the job's number in the session and its state, such as `a household · stage · version 1 · job 1 · running`, and is the target and the state for a job of no session; `cancel_requested`, whether you asked to cancel the job; `progress`, the step the job has reached, `preparation`, `writing`, `prose_writing`, `judging` or `reconstruction`, with its cycle; and `events`, the records of the job's calls of language models, each with the role called, the size and digest of its message, the counts of **language-model tokens**, the pieces of text that the provider of the language model counts and charges for, and any failure, but no text. A job of a session also holds `session`; once it has started, `revision` and `entry_numbers`, the version of the text it read and the numbers of the entries it read; and at its end `current`, whether the text stayed at that version while it ran. A job that matsya-master started at your request names that turn under `started_by`.
 
 A job runs for minutes. Read its route again every half minute until its state is neither `queued` nor `running`; `matsya job wait <job>` does this and prints each new step. In a shell without Python, this loop waits and then prints the job:
 
@@ -257,7 +259,7 @@ A job is started from the session's text by naming the session in place of a sou
 curl --fail-with-body -sS -X POST "$MATSYA_SERVER/v1/model-iterations" \
   -H "Authorization: Bearer $MATSYA_TOKEN" \
   -H "Content-Type: application/json" \
-  --data '{"session": "<session>"}'
+  --data '{"session": "<session>", "target": "stage"}'
 ```
 
 The job reads the session's entries up to the version of the text at the moment it starts, an answer of matsya-master among them only when you have accepted it, and a session that holds no text is refused with 422. `matsya job submit --session <session>` sends the same request.

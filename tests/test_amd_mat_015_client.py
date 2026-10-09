@@ -61,7 +61,8 @@ def new_machine(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     monkeypatch.setattr(config, "CONFIG_FILE", home / ".config" / "matsya" / "config.toml")
     for variable in ("MATSYA_TOKEN", "MATSYA_SERVER"):
         monkeypatch.delenv(variable, raising=False)
-    monkeypatch.setattr("urllib.request.urlopen", _no_request)
+    # the client's opener and `urlopen` both send through `OpenerDirector.open`
+    monkeypatch.setattr("urllib.request.OpenerDirector.open", _no_request)
     return config.CONFIG_FILE
 
 
@@ -307,10 +308,10 @@ def test_item_5_the_first_use_lines_come_first_until_the_configuration_file_exis
     status, out, _ = run("configure")
     assert status == 0 and out.startswith("Matsya: save your Matsya token and the service address\n")
     absent = tmp_path / "absent.md"
-    status, out, err = run("job", "submit", str(absent))
+    status, out, err = run("job", "submit", str(absent), "--target", "stage")
     assert (status, out) == (1, "") and err.startswith(f"Error: cannot read {absent}")
     # nor does a command run with MATSYA_TOKEN set and no configuration file
     new_machine.unlink()
     monkeypatch.setenv("MATSYA_TOKEN", TOKEN)
-    status, out, err = run("job", "submit", str(absent))
+    status, out, err = run("job", "submit", str(absent), "--target", "stage")
     assert (status, out) == (1, "") and err.startswith(f"Error: cannot read {absent}")

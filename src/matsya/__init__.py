@@ -9,9 +9,13 @@ and the job; or, for `wait_job` and `ask`, one request every few seconds
 until the job or the turn has ended; and returns the service's JSON answer.
 `job_files` writes an ended job's model folder and returns the paths it
 wrote, and `report_text` composes the folder's report from a job in the
-products view without any request (AMD-MAT-010 §§4 and 5). `MatsyaClient`
-takes an explicit Matsya token and service address instead, and holds the
-same operations as methods.
+products view without any request (AMD-MAT-010 §§4 and 5). `start_job` and
+`submit_job` require the job's target, written `target=`, one of `TARGETS`:
+`stage`, `period`, `trellis` or `recipe` (AMD-MAT-011 §3). A paper is sent
+as its text, in Markdown or LaTeX, which `paper=True` marks on either
+function, and a PDF is refused with `ValueError` before any request
+(AMD-MAT-012 §2). `MatsyaClient` takes an explicit Matsya token and service
+address instead, and holds the same operations as methods.
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from matsya.client import (
+    TARGETS,
     AuthenticationError,
     ContextTooLargeError,
     MatsyaClient,
@@ -30,9 +35,10 @@ from matsya.client import (
 )
 from matsya.config import ConfigurationError, load_config
 
-__version__ = "0.6.0"
+__version__ = "0.8.0"
 
 __all__ = [
+    "TARGETS",
     "AuthenticationError",
     "ConfigurationError",
     "ContextTooLargeError",
@@ -102,14 +108,21 @@ def start_job(
     no_session: bool = False,
     max_cycles: int | None = None,
     force: bool | None = None,
+    *,
+    target: str,
+    paper: bool = False,
 ) -> dict[str, Any]:
-    """Start a job of architect mode from a file, as `matsya job submit
-    <file>` does: a Markdown or text file becomes one entry of a new session
-    named after the file, or `name`, or of the existing `session`, and the
-    job starts from that session; `no_session` sends the text as the job's
-    source with no session, and a PDF is sent with no session. Returns the
-    service's answers as ``{"session": ..., "entry": ..., "job": ...}``
-    (`MatsyaClient.start_job`)."""
+    """Start a job of architect mode from a file at the target `target`, as
+    `matsya job submit <file> --target <target>` does: a Markdown, LaTeX or
+    plain-text file becomes one entry of a new session named after the
+    file, or `name`, or of the existing `session`, of the kind `user`, a
+    description, or with `paper=True` of the kind `paper`, as `--paper`
+    marks it, and the job starts from that session; `no_session` sends the
+    text as the job's source with no session. A PDF is refused with
+    `ValueError` before any request. `target` is required: the level of the
+    declaration the job returns, `stage`, `period`, `trellis` or `recipe`.
+    Returns the service's answers as ``{"session": ..., "entry": ...,
+    "job": ...}`` (`MatsyaClient.start_job`)."""
     return _make_client().start_job(
         path,
         name=name,
@@ -117,24 +130,31 @@ def start_job(
         no_session=no_session,
         max_cycles=max_cycles,
         force=force,
+        target=target,
+        paper=paper,
     )
 
 
 def submit_job(
     source_text: str | None = None,
-    pdf_path: str | Path | None = None,
     max_cycles: int | None = None,
     session: str | None = None,
     force: bool | None = None,
+    *,
+    target: str,
+    paper: bool = False,
 ) -> dict[str, Any]:
-    """Start a job of architect mode from a description, a paper's PDF or a
-    session (`POST /v1/model-iterations`; `MatsyaClient.submit_job`)."""
+    """Start a job of architect mode from a description's text, a paper's
+    text with `paper=True`, or a session, at the target `target`, which is
+    required: `stage`, `period`, `trellis` or `recipe`
+    (`POST /v1/model-iterations`; `MatsyaClient.submit_job`)."""
     return _make_client().submit_job(
         source_text=source_text,
-        pdf_path=pdf_path,
         max_cycles=max_cycles,
         session=session,
         force=force,
+        target=target,
+        paper=paper,
     )
 
 

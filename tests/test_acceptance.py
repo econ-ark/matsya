@@ -67,14 +67,14 @@ def test_item_2_each_command_against_the_service_of_the_test_configuration(servi
 
     description = tmp_path / "model.md"
     description.write_text(service.description, encoding="utf-8")
-    status, out, _ = run("job", "submit", str(description), "--max-cycles", "1")
+    status, out, _ = run("job", "submit", str(description), "--target", "stage", "--max-cycles", "1")
     job_session = re.search(r"^Session ([0-9a-f]{32}): model$", out, re.MULTILINE).group(1)
     job_id = re.search(r"^Job ([0-9a-f]{32}): queued$", out, re.MULTILINE).group(1)
     assert f"Entry 1: the text of {description}" in out.splitlines()
     status, out, _ = run("job", "wait", job_id, "--interval", "0.05")
     assert status == 0
     assert [line for line in out.splitlines() if not TIME.match(line)][:3] == [
-        f"model · version 1 · job 1 · converged ({job_id}), session {job_session}",
+        f"model · stage · version 1 · job 1 · converged ({job_id}), session {job_session}",
         "The job ended converged, with the reason source_agreement_and_semantic_fixed_point.",
         "Files of the last cycle: example.bl, note.md",
     ]
@@ -85,7 +85,7 @@ def test_item_2_each_command_against_the_service_of_the_test_configuration(servi
     status, out, _ = run("session", "show", job_session)
     lines = out.splitlines()
     assert status == 0 and lines[0] == f"Session {job_session}: model"
-    assert lines[lines.index("Jobs:") + 1] == f"  model · version 1 · job 1 · converged ({job_id})"
+    assert lines[lines.index("Jobs:") + 1] == f"  model · stage · version 1 · job 1 · converged ({job_id})"
     entries = lines[lines.index("Entries:") + 1 :]
     assert entries[0] == "  1. user"
     assert "\n".join(line[5:] for line in entries[1:]) == service.description.strip()
@@ -108,10 +108,12 @@ def test_item_2_each_command_against_the_service_of_the_test_configuration(servi
     assert written["note.md"].strip() == "none"
     stage = folder / "declaration" / "stages" / "example" / "example.bl"
     assert stage.read_text(encoding="utf-8") == written["example.bl"]
+    # the model prose, which the scripted Model-prose-writer opens with the
+    # heading Structure (AMD-MAT-011 §3)
     assert (folder / "economics.md").read_text(encoding="utf-8") == (
-        f'---\njob: "{job_id}"\nlabel: "model · version 1 · job 1 · converged"\n'
+        f'---\njob: "{job_id}"\nlabel: "model · stage · version 1 · job 1 · converged"\n'
         f'session: "{job_session}"\nversion: 1\ndate: {job["updated_at"][:10]}\n---\n\n'
-        + service.description
+        + service.model_prose
     )
     report = (folder / "report.md").read_text(encoding="utf-8").splitlines()
     assert [line for line in report if line.startswith("## ")] == [
@@ -212,7 +214,7 @@ def test_a_queued_job_of_a_session_is_cancelled_and_listed_by_its_label(service,
     a question reads it; and cancelling that ended job is refused with 409."""
     description = tmp_path / "model.md"
     description.write_text(service.description, encoding="utf-8")
-    status, out, _ = run("job", "submit", str(description), "--max-cycles", "1")
+    status, out, _ = run("job", "submit", str(description), "--target", "stage", "--max-cycles", "1")
     session_id = re.search(r"^Session ([0-9a-f]{32}): model$", out, re.MULTILINE).group(1)
     built = re.search(r"^Job ([0-9a-f]{32}): queued$", out, re.MULTILINE).group(1)
     status, out, _ = run("job", "wait", built, "--interval", "0.05")
@@ -234,13 +236,13 @@ def test_a_queued_job_of_a_session_is_cancelled_and_listed_by_its_label(service,
         for started in occupied:
             runner.executor.submit(occupy, started)
         assert all(started.wait(10) for started in occupied)
-        status, out, _ = run("job", "submit", "--session", session_id)
+        status, out, _ = run("job", "submit", "--session", session_id, "--target", "stage")
         queued = re.search(r"^Job ([0-9a-f]{32}): queued$", out, re.MULTILINE).group(1)
         status, out, _ = run("job", "status", queued)
-        assert out.splitlines() == ["model · job 2 · queued", f"Job {queued}: queued"]
+        assert out.splitlines() == ["model · stage · job 2 · queued", f"Job {queued}: queued"]
         status, out, err = run("job", "cancel", queued)
         assert (status, err) == (0, "")
-        assert out.splitlines() == ["model · job 2 · cancelled", f"Job {queued}: cancelled"]
+        assert out.splitlines() == ["model · stage · job 2 · cancelled", f"Job {queued}: cancelled"]
     finally:
         release.set()
     # two tasks that wait for each other run only once both workers are
@@ -259,17 +261,17 @@ def test_a_queued_job_of_a_session_is_cancelled_and_listed_by_its_label(service,
     lines = out.splitlines()
     at = lines.index("Jobs:")
     assert lines[at + 1 : at + 3] == [
-        f"  model · version 1 · job 1 · converged ({built})",
-        f"  model · job 2 · cancelled ({queued})",
+        f"  model · stage · version 1 · job 1 · converged ({built})",
+        f"  model · stage · job 2 · cancelled ({queued})",
     ]
 
     # the converged job is selected, and a question reads it
     status, out, _ = run("session", "select", session_id, built)
     assert out.splitlines()[0] == (
-        f"Selected job of session {session_id}: model · version 1 · job 1 · converged ({built})"
+        f"Selected job of session {session_id}: model · stage · version 1 · job 1 · converged ({built})"
     )
     status, out, _ = run("session", "show", session_id)
-    assert f"Selected job: model · version 1 · job 1 · converged ({built})" in out.splitlines()
+    assert f"Selected job: model · stage · version 1 · job 1 · converged ({built})" in out.splitlines()
     service.caller.replies.append(
         (
             service.role,
@@ -286,7 +288,7 @@ def test_a_queued_job_of_a_session_is_cancelled_and_listed_by_its_label(service,
     status, out, err = run("ask", session_id, "What does the model contain?", "--interval", "0.05")
     assert status == 0, err
     assert [line for line in out.splitlines() if not TIME.match(line)][:2] == [
-        f"Answer from model · version 1 · job 1 · converged ({built})",
+        f"Answer from model · stage · version 1 · job 1 · converged ({built})",
         "The model has one household.",
     ]
 
@@ -323,7 +325,7 @@ def test_a_turn_starts_a_job_that_follow_waits_for_and_writes(service, run, tmp_
                     "answer": started,
                     "citations": [],
                     "decisions": [],
-                    "submit_job": {"max_cycles": 1},
+                    "submit_job": {"max_cycles": 1, "target": "stage"},
                 }
             ),
         )
@@ -340,7 +342,7 @@ def test_a_turn_starts_a_job_that_follow_waits_for_and_writes(service, run, tmp_
         "",
         f"Job 1 started from version 2 of this session's text ({job_id}); "
         f"follow it with: matsya job wait {job_id}",
-        f"a household · version 2 · job 1 · converged ({job_id}), session {session_id}",
+        f"a household · stage · version 2 · job 1 · converged ({job_id}), session {session_id}",
         "The job ended converged, with the reason source_agreement_and_semantic_fixed_point.",
         "Files of the last cycle: example.bl, note.md",
         f"Write the model folder and its report with: matsya job files {job_id} <folder>",

@@ -3,20 +3,24 @@
 `MatsyaClient` sends each request to one route of the service, with the
 user's Matsya token in the `Authorization` header, and returns the service's
 JSON answer; `start_job` sends the three requests that keep a job's file in a
-session: the session, the entry and the job. A job of architect mode and a
-turn of conversation mode run on the service after their routes have
-answered; `wait_job` and `ask` then ask for their state until it is final.
-`job_files` writes an ended job's model folder, and `report_text` composes
-the folder's report from the products view of the job's record, by a
-program and with no language model (AMD-MAT-010 §§4 and 5). The module uses
-the standard library alone.
+session: the session, the entry and the job. Every job names its target, one
+of `TARGETS`, the level of the declaration it returns (AMD-MAT-011 §3),
+which `submit_job` and `start_job` require. A paper is sent as its text, in
+Markdown or LaTeX, which `paper=True` marks on either function, and a PDF is
+refused with `PDF_REFUSAL` before any request (AMD-MAT-012 §2). A job of
+architect mode and a turn of conversation mode run on the service after
+their routes have answered; `wait_job` and `ask` then ask for their state
+until it is final. `job_files` writes an ended job's model folder, and
+`report_text` composes the folder's report from the products view of the
+job's record, by a program and with no language model (AMD-MAT-010 §§4 and
+5). The module uses the standard library alone.
 """
 
 from __future__ import annotations
 
-import base64
 import copy
 import json
+import os
 import re
 import time
 import urllib.error
@@ -45,6 +49,18 @@ TURN_FINAL_STATES = ("finished", "failed", "interrupted")
 # material of the report, and `full` the record as the job store keeps it
 # (AMD-MAT-010 §3)
 VIEWS = ("products", "full")
+# the four targets of a job, the levels of a declaration that a job returns,
+# in the order in which each holds the one before it, as `TARGETS` of the
+# service's `meaning.py` gives them (AMD-MAT-011 §2): one stage file; the
+# stage files of one period with its period file; the stage files, the
+# period files and the trellis file; and those of a trellis with a methods
+# file for each stage the source says how to solve, the calibration, the
+# settings and the recipe `spec.yml`
+TARGETS = ("stage", "period", "trellis", "recipe")
+# the sentence with which the client refuses a PDF before any request, the
+# command and the functions alike, since a paper is sent as its text
+# (AMD-MAT-012 §2, AAS's answer to Q-M14 of 9 October 2026)
+PDF_REFUSAL = "A paper is sent as Markdown or LaTeX text; convert the PDF first."
 # the files of the model folder beside `declaration/` (AMD-MAT-010 §5): the
 # model prose, the report and the job as the service returned it in the
 # products view
@@ -54,6 +70,18 @@ RECORD_FILE = "record.json"
 # the folder written with `all_iterates`, and the job in the full view within it
 ITERATES_FOLDER = "iterates"
 FULL_RECORD_FILE = "iterates/record-full.json"
+# the flags with which `job_files` opens each file of the model folder: for
+# writing, created or emptied, without following a symbolic link at the
+# file's own name (O_NOFOLLOW, which Windows lacks), and on Windows in binary
+# mode, so that the newlines are translated once, by `open`, as
+# `Path.write_text` translates them
+WRITE_FLAGS = (
+    os.O_WRONLY
+    | os.O_CREAT
+    | os.O_TRUNC
+    | getattr(os, "O_NOFOLLOW", 0)
+    | getattr(os, "O_BINARY", 0)
+)
 # the writer's note among the files of a writing, and the texts of a note
 # that leaves nothing open (`unresolved_note` of the configuration's Matsya
 # handler module counts every other note as unresolved)
@@ -145,8 +173,7 @@ class ServerError(MatsyaError):
 
 
 class ContextTooLargeError(MatsyaError):
-    """The request is larger than the service accepts (413), such as a PDF
-    over 16 MiB."""
+    """The request is larger than the service accepts (413)."""
 
 
 def _origin(url: str) -> str:
@@ -243,15 +270,27 @@ def _relative_name(name: object) -> str | None:
 
 def is_pdf(name: str | Path, data: bytes) -> bool:
     """Whether a file is a PDF: its name ends in `.pdf` or its first bytes
-    are `%PDF-`."""
+    are `%PDF-`. The client sends a PDF neither as a job's source nor as an
+    entry, and refuses it with `PDF_REFUSAL`."""
     return str(name).lower().endswith(".pdf") or data.startswith(b"%PDF-")
+
+
+def _check_target(target: object) -> None:
+    """Refuse, with `ValueError`, a target that is not one of `TARGETS`, in
+    the words of the service's refusal (AMD-MAT-011 §3), so that a job whose
+    request the service would refuse sends no request."""
+    if target not in TARGETS:
+        raise ValueError(f"target must be stage, period, trellis or recipe, not {target!r}.")
 
 
 def last_cycle_files(record: dict[str, Any]) -> dict[str, str]:
     """The files of a job's last cycle, by file name, from the products view
-    of its record (`last_cycle.files`, AMD-MAT-010 §3): the stage files, the
-    writer's note and any period or trellis file; an empty mapping when the
-    record holds no cycle or the last cycle stopped before its writing."""
+    of its record (`last_cycle.files`, AMD-MAT-010 §3): the files of the
+    job's target, the stage files and, for a period, a trellis or a recipe,
+    the period and trellis files and a recipe's methods, calibration and
+    settings files and `spec.yml` (AMD-MAT-011 §2), with the writer's note;
+    an empty mapping when the record holds no cycle or the last cycle
+    stopped before its writing."""
     last = record.get("last_cycle")
     files = last.get("files") if isinstance(last, dict) else None
     return dict(files) if isinstance(files, dict) else {}
@@ -297,8 +336,9 @@ def _role_text(role: str) -> str:
 
 def _label_line(job: dict[str, Any], label: object) -> str:
     """The content of the report's first heading: the text of the job's
-    label, the job's identifier and its session's, such as "model · version
-    1 · job 1 · converged (<job>), session <session>"."""
+    label, which names the job's target (AMD-MAT-011 §3), the job's
+    identifier and its session's, such as "model · stage · version 1 · job
+    1 · converged (<job>), session <session>"."""
     text = label.get("text") if isinstance(label, dict) else None
     if not isinstance(text, str) or not text.strip():
         text = str(job.get("state"))
@@ -583,20 +623,22 @@ def report_text(products_view: dict[str, Any], label: dict[str, Any] | None = No
     it in the products view, the default, and as `record.json` holds it: its
     identifier, its session, its revision, its label and, under `result`,
     the products view of its record. `label` is the job's label of
-    AMD-MAT-008 §2, `{"model", "revision", "number", "state", "overtaken",
-    "text"}`; by default the label `products_view` holds.
+    AMD-MAT-008 §2, `{"model", "target", "revision", "number", "state",
+    "overtaken", "text"}`, whose `target` AMD-MAT-011 §3 adds; by default
+    the label `products_view` holds.
 
-    The report's headings stand in this order: The job, the label's text
-    with the identifiers of the job and of its session; Status, the status
-    and the reason in one sentence; Cycles and version; What did not match,
-    the sentence "The judges agree on every heading." when both judges
-    agree, else one subsection per judge with the headings on which it
-    disagrees, each with its counts in the two orders of the texts and its
-    quoted sentences; The round-trip comparison, equal or not, with the
-    first difference; The writer's note, when the record holds one that
-    leaves something open; Questions, when the record holds questions; and
-    Cost, the language-model tokens charged by role and in total. Every
-    sentence is the record's content or a fixed sentence of this module.
+    The report's headings stand in this order: The job, the label's text,
+    which names the job's target, with the identifiers of the job and of
+    its session; Status, the status and the reason in one sentence; Cycles
+    and version; What did not match, the sentence "The judges agree on
+    every heading." when both judges agree, else one subsection per judge
+    with the headings on which it disagrees, each with its counts in the
+    two orders of the texts and its quoted sentences; The round-trip
+    comparison, equal or not, with the first difference; The writer's
+    note, when the record holds one that leaves something open; Questions,
+    when the record holds questions; and Cost, the language-model tokens
+    charged by role and in total. Every sentence is the record's content or
+    a fixed sentence of this module.
     """
     lines = [f"# {REPORT_TITLE}"]
     for heading, body in _report_sections(products_view, label):
@@ -657,10 +699,11 @@ def _declaration_path(name: str, keys: list[str]) -> str:
     """The path in the model folder of one file of the products, placed by
     its name: a stage file `<key>.bl` under `declaration/stages/<key>/`; a
     methods file `methods.yml` beside the only stage, when the products hold
-    one; and every other file, `period.yml`, `trellis.yml`,
-    `calibration/<file>`, `settings/<file>` and `stages/<key>/methods.yml`
-    among them, under `declaration/` by its name. The note is placed by
-    `_folder_texts`."""
+    one; and every other file of the job's target (AMD-MAT-011 §2),
+    `period.yml` or `period.<name>.yml`, `trellis.yml`, the recipe
+    `spec.yml`, `calibration/<file>`, `settings/<file>` and
+    `stages/<key>/methods.yml` among them, under `declaration/` by its
+    name. The note is placed by `_folder_texts`."""
     if "/" not in name and name.endswith(".bl"):
         return f"declaration/stages/{name[:-3]}/{name}"
     if name == "methods.yml" and len(keys) == 1:
@@ -693,7 +736,8 @@ def _checked_files(files: object, job_id: str, where: str) -> dict[str, str]:
 def _folder_texts(job: dict[str, Any]) -> dict[str, str]:
     """The model folder of an ended job from the job in the products view
     (AMD-MAT-010 §5), by path within the folder: `economics.md` when the
-    record holds model prose, `report.md`, the files of the last cycle under
+    record holds model prose, `report.md`, the files of the last cycle, which
+    are the files of the job's target (AMD-MAT-011 §2), under
     `declaration/`, the writer's note when it leaves something open beside a
     single stage as `declaration/stages/<key>/<key>.md` and otherwise as
     `declaration/notes.md`, and `record.json`."""
@@ -1022,35 +1066,47 @@ class MatsyaClient:
     def submit_job(
         self,
         source_text: str | None = None,
-        pdf_path: str | Path | None = None,
         max_cycles: int | None = None,
         session: str | None = None,
         force: bool | None = None,
+        *,
+        target: str,
+        paper: bool = False,
     ) -> dict[str, Any]:
         """`POST /v1/model-iterations`: start a job of architect mode, and
         return its identifier, its state `queued` and its status route.
 
-        The job reads one of three source materials: `source_text`, a model
-        description, sent as ``{"kind": "description", "text": ...}``;
-        `pdf_path`, a paper's PDF, sent as ``{"kind": "paper", "pdf_base64":
-        ...}``; or `session`, the identifier of a session whose entries the
-        service reads when the job starts, with no source sent. `max_cycles`
-        limits the cycles of writing and checking. `force` sends the job on
-        to writing when preparation ends with questions; every assumption
-        Prose-to-Bellman-Sym then supplies is recorded. An argument left at
-        `None` is not sent.
+        The job reads one of two source materials: `source_text`, sent as a
+        model description, ``{"kind": "description", "text": ...}``, or,
+        with `paper` true, as a paper's text in Markdown or LaTeX,
+        ``{"kind": "paper", "text": ...}``; or `session`, the identifier of
+        a session whose entries the service reads when the job starts, with
+        no source sent, a session that holds a `paper` entry being read as a
+        paper. `paper` marks `source_text` alone, and with `session` it
+        raises `ValueError` before any request (AMD-MAT-012 §2). `target`,
+        required and written by its name, is the level of the declaration
+        the job returns, one of `TARGETS`: `stage`, `period`, `trellis` or
+        `recipe` (AMD-MAT-011 §§2 and 3); another word raises `ValueError`
+        before any request. `max_cycles` limits the cycles of writing and
+        checking. `force` sends the job on to writing when preparation ends
+        with questions; every assumption Prose-to-Bellman-Sym then supplies
+        is recorded. An optional argument left at `None` is not sent.
         """
-        given = [value for value in (source_text, pdf_path, session) if value is not None]
+        given = [value for value in (source_text, session) if value is not None]
         if len(given) != 1:
-            raise ValueError("A job takes exactly one of source_text, pdf_path and session.")
+            raise ValueError("A job takes exactly one of source_text and session.")
+        if paper and source_text is None:
+            raise ValueError(
+                "paper marks source_text as a paper's text; a job from a session reads the "
+                "session's entries, a paper entry among them."
+            )
+        _check_target(target)
         body: dict[str, Any] = {}
         if source_text is not None:
-            body["source"] = {"kind": "description", "text": source_text}
-        elif pdf_path is not None:
-            encoded = base64.b64encode(Path(pdf_path).read_bytes()).decode("ascii")
-            body["source"] = {"kind": "paper", "pdf_base64": encoded}
+            body["source"] = {"kind": "paper" if paper else "description", "text": source_text}
         else:
             body["session"] = session
+        body["target"] = target
         if max_cycles is not None:
             body["max_cycles"] = max_cycles
         if force is not None:
@@ -1060,9 +1116,11 @@ class MatsyaClient:
     def job(self, job_id: str, view: str = "products") -> dict[str, Any]:
         """`GET /v1/model-iterations/{job_id}?view=...`: a job's state; its
         label (`label`, AMD-MAT-008 §2), whose `text` gives the session's
-        name, the version of the session's text the job read, the job's
-        number and its state, such as "Household with firms · version 2 ·
-        job 7 · running"; whether its cancellation was requested
+        name, the job's target (AMD-MAT-011 §3), the version of the
+        session's text the job read, the job's number and its state, such as
+        "Household with firms · trellis · version 2 · job 7 · running", and
+        for a job of no session its target and its state, such as "trellis ·
+        queued"; whether its cancellation was requested
         (`cancel_requested`); its progress (its step and cycle); its events;
         and, once it has ended, its record under `result` or its error code
         under `error`.
@@ -1122,14 +1180,16 @@ class MatsyaClient:
         new or empty, and return the paths written.
 
         From the products view of the job: `economics.md`, the model prose
-        after a front matter naming the job, its session, the version of
-        the session's text and the date the job ended; `report.md`, the
-        report of `report_text`; under `declaration/`, each stage file
-        `<key>.bl` of the last cycle as `stages/<key>/<key>.bl`, the
-        writer's note, when it leaves something open, as
-        `stages/<key>/<key>.md` beside a single stage and as `notes.md`
-        otherwise, and each period, trellis, calibration, settings or
-        methods file the products hold, placed by its name; and
+        after a front matter naming the job, its label, whose text names the
+        job's target, its session, the version of the session's text and
+        the date the job ended; `report.md`, the report of `report_text`;
+        under `declaration/`, the files of the job's target (AMD-MAT-011
+        §2): each stage file `<key>.bl` of the last cycle as
+        `stages/<key>/<key>.bl`, the writer's note, when it leaves something
+        open, as `stages/<key>/<key>.md` beside a single stage and as
+        `notes.md` otherwise, and each period, trellis, recipe
+        (`spec.yml`), calibration, settings or methods file the products
+        hold, placed by its name; and
         `record.json`, the job as the service returned it in the products
         view. With `all_iterates` true, also, from the full view, which
         training reads, `iterates/cycle-<n>/` for each cycle, holding its
@@ -1149,7 +1209,10 @@ class MatsyaClient:
         anything is written. A path within the folder that is, or passes
         through, a symbolic link is refused with `FileExistsError` before
         anything is written, since the link's target may lie outside the
-        folder.
+        folder. Each file is opened without following a symbolic link at
+        its own name (`O_NOFOLLOW`, which Windows lacks), so that a link
+        put there after that check is refused in the same way; the files
+        before it are then already written.
         """
         folder = Path(folder)
         check_folder(folder, overwrite)
@@ -1171,7 +1234,15 @@ class MatsyaClient:
         for relative, text in texts.items():
             path = folder / relative
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(text, encoding="utf-8")
+            try:
+                descriptor = os.open(path, WRITE_FLAGS, 0o666)
+            except OSError:
+                # a symbolic link put at the file's name after the check is
+                # refused by the check, with its message; any other fault is raised
+                _check_targets(folder, [relative])
+                raise
+            with open(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(text)
         return [folder / relative for relative in paths]
 
     def start_job(
@@ -1182,32 +1253,45 @@ class MatsyaClient:
         no_session: bool = False,
         max_cycles: int | None = None,
         force: bool | None = None,
+        *,
+        target: str,
+        paper: bool = False,
     ) -> dict[str, Any]:
         """Start a job of architect mode from a file, kept in a session, as
-        `matsya job submit <file>` does, and return the service's answers.
+        `matsya job submit <file> --target <target>` does, and return the
+        service's answers.
 
-        A Markdown or text file is appended as one `user` entry to a new
-        session named after the file, its name without the extension, or
-        `name`; with `session`, to that existing session. The job is then
-        started from the session, with no source sent, so that its
-        questions are appended to the session, where the user replies to
-        them and asks questions in conversation mode. With `no_session`
-        true, the text is sent as the job's source and no session is
-        created, so the job's questions stand in its record only. A PDF
-        cannot be attached to a session yet, so a paper's PDF is sent as the
-        job's source with no session, and `name` or `session` given with a
-        PDF is refused. `max_cycles` and `force` are sent as `submit_job`
-        sends them.
+        The file is text in UTF-8, Markdown, LaTeX or plain text: a model
+        description or, with `paper` true, a paper, as `matsya job submit
+        <file> --paper` marks it. It is appended as one entry, of the kind
+        `user` or, for a paper, `paper`, to a new session named after the
+        file, its name without the extension, or `name`; with `session`, to
+        that existing session. The job is then started from the session,
+        with no source sent, so that its questions are appended to the
+        session, where the user replies to them and asks questions in
+        conversation mode. With `no_session` true, the text is sent as the
+        job's source, a description or a paper, and no session is created,
+        so the job's questions stand in its record only. A PDF, known by its
+        name or its first bytes (`is_pdf`), is refused with `ValueError` and
+        the sentence `PDF_REFUSAL`, whatever the other arguments
+        (AMD-MAT-012 §2). `target`, required and written by its name, is the
+        level of the declaration the job returns, `stage`, `period`,
+        `trellis` or `recipe` (AMD-MAT-011 §§2 and 3); `target`,
+        `max_cycles` and `force` are sent as `submit_job` sends them.
 
         The answer is ``{"session": ..., "entry": ..., "job": ...}``: the
         new session's record, or `None` where none was created; the answer
         to the appended entry, the session's listing with `entry`, or
         `None`; and the job's answer, its identifier, its state `queued` and
         its status route. An argument the client refuses raises
-        `ValueError`, and a file it cannot read `OSError`, before any
-        request. When the service refuses the entry or the job after the
-        session was created, the refusal's message names the session.
+        `ValueError`, a target outside the four words and a PDF among them,
+        and a file it cannot read `OSError`, before any request, so that no
+        session is created for a job the client refuses. When the service
+        refuses the entry or the job after the session was created, the
+        refusal's message names the session and the command that starts
+        the job from it.
         """
+        _check_target(target)
         if session is not None and no_session:
             raise ValueError("A job takes session or no_session, not both.")
         if name is not None and (session is not None or no_session):
@@ -1217,15 +1301,9 @@ class MatsyaClient:
             )
         path = Path(path)
         data = path.read_bytes()
-        options = {"max_cycles": max_cycles, "force": force}
+        options = {"target": target, "max_cycles": max_cycles, "force": force}
         if is_pdf(path.name, data):
-            if session is not None or name is not None:
-                raise ValueError(
-                    f"{path} is a PDF, and a PDF cannot be attached to a session yet; submit it "
-                    "with no session and no session name, or send the paper's text as a "
-                    "Markdown or text file."
-                )
-            return {"session": None, "entry": None, "job": self.submit_job(pdf_path=path, **options)}
+            raise ValueError(PDF_REFUSAL)
         try:
             text = data.decode("utf-8")
         except UnicodeDecodeError:
@@ -1233,14 +1311,17 @@ class MatsyaClient:
         if not text.strip():
             raise ValueError(f"{path} holds no text.")
         if no_session:
-            return {"session": None, "entry": None, "job": self.submit_job(source_text=text, **options)}
+            # a paper's text is sent unchanged, so that the lines the record's
+            # references name are the lines of the file (AMD-MAT-012 §2)
+            job = self.submit_job(source_text=text, paper=paper, **options)
+            return {"session": None, "entry": None, "job": job}
         created = None
         if session is None:
             created = self.new_session(path.stem if name is None else name)
             session = created["id"]
         entry = None
         try:
-            entry = self.add_entry(session, text)
+            entry = self.add_entry(session, text, kind="paper" if paper else "user")
             job = self.submit_job(session=session, **options)
         except MatsyaError as error:
             # what the session received stays in it, and the message names it
@@ -1248,7 +1329,7 @@ class MatsyaClient:
                 held = (
                     f"Session {session} holds the text of {path} as entry "
                     f"{entry['entry']['number']}, and no job was started from it; start one "
-                    f"with: matsya job submit --session {session}"
+                    f"with: matsya job submit --session {session} --target {target}"
                 )
             elif created is not None:
                 held = f"Session {session} was created and holds no entry."

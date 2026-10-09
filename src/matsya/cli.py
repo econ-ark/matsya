@@ -7,9 +7,11 @@ spec 0.3 from a terminal and prints the user guide installed with it:
     matsya configure
     matsya index
     matsya search "<query>" [--collections NAMES] [--limit N]
-    matsya job submit <file> [--name NAME | --session <session> | --no-session]
+    matsya job submit <file> --target {stage,period,trellis,recipe} [--paper]
+                             [--name NAME | --session <session> | --no-session]
                              [--max-cycles N] [--force]
-    matsya job submit --session <session> [--max-cycles N] [--force]
+    matsya job submit --session <session> --target {stage,period,trellis,recipe}
+                      [--max-cycles N] [--force]
     matsya job status <job>
     matsya job wait <job> [--interval SECONDS]
     matsya job files <job> <folder> [--all-iterates] [--overwrite]
@@ -23,13 +25,23 @@ spec 0.3 from a terminal and prints the user guide installed with it:
     matsya ask <session> "<question>" [--stage-file PATH] [--index-digest DIGEST]
                                       [--follow FOLDER]
 
-`job submit <file>` keeps a description file in a session, new and named
-after the file unless `--session` names one, and starts the job from it;
-`--no-session` sends the file as the job's source instead, and a PDF is sent
-with no session. A job of a session is printed with the text of its label,
-such as "Household with firms · version 2 · job 7 · converged": the session's
-name, the version of its text the job read, the job's number among the
-session's jobs and its state (AMD-MAT-008 §2). A job that has ended is
+`job submit <file>` keeps the file, text in UTF-8, in a session, new and
+named after the file unless `--session` names one, as an entry of the kind
+`user`, a description, or with `--paper` of the kind `paper`, and starts the
+job from it; `--no-session` sends the file as the job's source instead, a
+description or with `--paper` a paper. A PDF, known by its name or its first
+bytes, is refused by `job submit` and `session add` before any request, with
+exit status 2 and the sentence `PDF_REFUSAL` (AMD-MAT-012 §2). Every job
+names its target, the level of the declaration it returns, `stage`,
+`period`, `trellis` or `recipe` (AMD-MAT-011 §3):
+`job submit` requires `--target`, and without it, or with another word, the
+command is refused with exit status 2 before any request, argparse printing
+the four words in the command's usage line. A job of a session is printed
+with the text of its label, such as "Household with firms · trellis ·
+version 2 · job 7 · converged": the session's name, the job's target, the
+version of its text the job read, the job's number among the session's jobs
+and its state (AMD-MAT-008 §2); a job of no session is printed with its
+target and its state, such as "trellis · converged". A job that has ended is
 printed with the first two headings of its report, the label with the
 identifiers and the status sentence; `job files` writes its model folder and
 report (AMD-MAT-010 §§4 and 5), and `ask --follow` waits for the job a turn
@@ -65,6 +77,8 @@ from typing import Any, Callable
 from matsya import __version__, guide
 from matsya.client import (
     JOB_FINAL_STATES,
+    PDF_REFUSAL,
+    TARGETS,
     MatsyaClient,
     MatsyaError,
     _report_sections,
@@ -131,7 +145,8 @@ Set up once:
 Examples:
   matsya index
   matsya search "decision perch state and controls" --collections repository --limit 4
-  matsya job submit model.md
+  matsya job submit model.md --target trellis
+  matsya job submit paper.md --paper --target stage
   matsya job wait <job>
   matsya session show <session>
   matsya session add <session> reply.md --replies-to <number>
@@ -167,17 +182,24 @@ def _decoded(data: bytes, name: str) -> str:
         raise CommandError(f"{name} is not text in UTF-8") from None
 
 
+def _names_a_pdf(name: str) -> bool:
+    """Whether the file a command names is a PDF, by its name or, when the
+    file can be read, by its first bytes (`is_pdf`); a file that cannot be
+    read is refused later, with the reason."""
+    try:
+        with open(name, "rb") as handle:
+            start = handle.read(5)
+    except OSError:
+        start = b""
+    return is_pdf(name, start)
+
+
 def _entry_text(name: str) -> str:
-    """The text of an entry: the file's text, or the standard input for `-`."""
+    """The text of an entry: the file's text, or the standard input for `-`;
+    a file that is a PDF was refused before, by `_check_arguments`."""
     if name == "-":
         return sys.stdin.read()
-    data = _file_bytes(name)
-    if is_pdf(name, data):
-        raise CommandError(
-            f"{name} is a PDF, and an entry holds text; send the paper's text as a Markdown "
-            "or text file, or start a job from the PDF with: matsya job submit"
-        )
-    return _decoded(data, name)
+    return _decoded(_file_bytes(name), name)
 
 
 # -- plain text for a person
@@ -252,9 +274,10 @@ def _search_lines(found: dict[str, Any]) -> list[str]:
 
 
 def _label_text(job: dict[str, Any]) -> str | None:
-    """The text of a job's label (AMD-MAT-008 §2), such as "Household with
-    firms · version 2 · job 7 · converged", or None when the record carries
-    no label."""
+    """The text of a job's label (AMD-MAT-008 §2), as the service gives it,
+    such as "Household with firms · trellis · version 2 · job 7 · converged",
+    the job's target after the session's name (AMD-MAT-011 §3), or None
+    when the record carries no label."""
     label = job.get("label")
     text = label.get("text") if isinstance(label, dict) else None
     return text if isinstance(text, str) and text.strip() else None
@@ -262,16 +285,19 @@ def _label_text(job: dict[str, Any]) -> str | None:
 
 def _job_name(job: dict[str, Any]) -> str:
     """A job by the text of its label and its identifier, such as
-    "Household with firms · version 2 · job 7 · converged (<job>)", or
-    "job <job>" when the record carries no label."""
+    "Household with firms · trellis · version 2 · job 7 · converged
+    (<job>)", or "job <job>" when the record carries no label."""
     text = _label_text(job)
     return f"{text} ({job.get('id')})" if text else f"job {job.get('id')}"
 
 
 def _label_lines(job: dict[str, Any]) -> list[str]:
     """The line of a job's label that begins its printed form. The label of
-    a job of no session is its state alone, which the next line states, so
-    it adds no line."""
+    a job of no session is its target and its state, such as "trellis ·
+    queued" (AMD-MAT-011 §3), and is printed as its own line; a label that
+    is the job's state alone, that of a job of no session whose request
+    names no target, which a job created before AMD-MAT-011 is, adds no
+    line, since the next line states the state."""
     text = _label_text(job)
     return [text] if text and text != job.get("state") else []
 
@@ -532,14 +558,25 @@ def _kept_line(session_id: object) -> str:
 
 
 def _job_submit(client: MatsyaClient, args: argparse.Namespace) -> list[str]:
-    options = {"max_cycles": args.max_cycles, "force": True if args.force else None}
+    # the target, which the parser requires, is sent in every form of the
+    # request (AMD-MAT-011 §3)
+    options = {
+        "target": args.target,
+        "max_cycles": args.max_cycles,
+        "force": True if args.force else None,
+    }
     if args.file is None:
         # the job reads the session's entries as they stand
         job = client.submit_job(session=args.session, **options)
         return _started_lines(job) + [_kept_line(args.session)]
     try:
         started = client.start_job(
-            args.file, name=args.name, session=args.session, no_session=args.no_session, **options
+            args.file,
+            name=args.name,
+            session=args.session,
+            no_session=args.no_session,
+            paper=args.paper,
+            **options,
         )
     except OSError as error:
         raise CommandError(f"cannot read {args.file}: {error.strerror or error}") from None
@@ -547,18 +584,18 @@ def _job_submit(client: MatsyaClient, args: argparse.Namespace) -> list[str]:
         raise CommandError(str(error)) from None
     job, listing = started["job"], started["entry"]
     if listing is None:
-        # no session: the user asked for none, or the file is a PDF
-        reason = (
-            "The job has no session"
-            if args.no_session
-            else "A PDF cannot be attached to a session yet, so the job has no session"
-        )
+        # no session, as the user asked with --no-session
         return _started_lines(job) + [
-            f"{reason}, and its questions stand in its record only: matsya job status {job.get('id')}"
+            "The job has no session, and its questions stand in its record only: "
+            f"matsya job status {job.get('id')}"
         ]
+    entry = listing.get("entry") or {}
+    # a paper is an entry of the kind paper, which the line names
+    # (AMD-MAT-012 §2)
+    marked = " (paper)" if entry.get("kind") == "paper" else ""
     return [
         f"Session {listing.get('id')}: {listing.get('name')}",
-        f"Entry {(listing.get('entry') or {}).get('number')}: the text of {args.file}",
+        f"Entry {entry.get('number')}{marked}: the text of {args.file}",
         *_started_lines(job),
         _kept_line(listing.get("id")),
     ]
@@ -882,14 +919,41 @@ def _build_parser() -> argparse.ArgumentParser:
     submit = job_commands.add_parser(
         "submit",
         parents=[shared],
-        help="start a job from a description kept in a session, from a PDF or from a session",
+        help=(
+            "start a job at the target named, from a description or a paper kept in a session, "
+            "or from a session"
+        ),
     )
     submit.add_argument(
         "file",
         nargs="?",
         help=(
-            "a model description in Markdown or text, kept as an entry of the job's session, "
-            "or a paper's PDF, sent with no session"
+            "a model description, or with --paper a paper, in Markdown, LaTeX or plain text, "
+            "kept as an entry of the job's session; a PDF is refused"
+        ),
+    )
+    # required, so that the parser refuses a job without a target with exit
+    # status 2 and prints the four words in the usage line (AMD-MAT-011 §3,
+    # AAS's answer to Q-M18)
+    submit.add_argument(
+        "--target",
+        required=True,
+        choices=TARGETS,
+        help=(
+            "the level of the declaration the job returns, required: stage, one stage file; "
+            "period, the stage files of one period and period.yml; trellis, the stage files, "
+            "the period files and trellis.yml; recipe, the files of a trellis with a methods "
+            "file for each stage the source says how to solve, the calibration, the settings "
+            "and the recipe spec.yml"
+        ),
+    )
+    # the mark of a paper, sent as its text (AMD-MAT-012 §2)
+    submit.add_argument(
+        "--paper",
+        action="store_true",
+        help=(
+            "the file is a paper's text in Markdown or LaTeX, appended to the job's session as "
+            "an entry of the kind paper, or with --no-session sent as the job's source of that kind"
         ),
     )
     session_options = submit.add_mutually_exclusive_group()
@@ -934,8 +998,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "files",
         parents=[shared],
         help=(
-            "write an ended job's model folder: economics.md, report.md, the stage files under "
-            "declaration/ and record.json"
+            "write an ended job's model folder: economics.md, report.md, the files of the job's "
+            "target under declaration/ and record.json"
         ),
     )
     files.add_argument("job_id", metavar="job")
@@ -1053,10 +1117,18 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _check_arguments(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     """Refuse, before any request, the arguments the routes do not accept
-    together."""
+    together, and a file that is a PDF, which the client sends neither as a
+    job's source nor as an entry (`PDF_REFUSAL`, AMD-MAT-012 §2)."""
     if args.command == "job" and args.job_command == "submit":
         if args.file is None and args.session is None:
-            parser.error("job submit needs a description or PDF file, or --session")
+            parser.error("job submit needs a file, a description or a paper, or --session")
+        if args.file is None and args.paper:
+            parser.error(
+                "--paper marks the file submitted as a paper; a job from --session alone reads "
+                "the session's entries as they stand"
+            )
+        if args.file is not None and _names_a_pdf(args.file):
+            parser.error(PDF_REFUSAL)
         if args.max_cycles is not None and args.max_cycles < 1:
             parser.error("--max-cycles must be a positive integer")
     if args.command == "session" and args.session_command == "add":
@@ -1067,6 +1139,8 @@ def _check_arguments(parser: argparse.ArgumentParser, args: argparse.Namespace) 
                 )
         elif args.file is None:
             parser.error(f"a {args.kind} entry needs a file holding its text (- reads the standard input)")
+        elif args.file != "-" and _names_a_pdf(args.file):
+            parser.error(PDF_REFUSAL)
     if args.command == "session" and args.session_command == "select":
         if (args.job_id is None) == (not args.none):
             parser.error("session select names a job, or --none to clear the selection, and not both")
@@ -1104,7 +1178,9 @@ def main(argv: list[str] | None = None) -> int:
     """Run the command that `argv`, or the command line, names, and return
     its exit status: 0 when it was carried out, 1 when the service refused
     the request or the client could not send it, or `docs --online` could
-    not read a page. With no command, print the orientation. At the first
+    not read a page. Arguments the parser refuses, such as `job submit`
+    without `--target`, end the command with status 2 before any request.
+    With no command, print the orientation. At the first
     use of the client on this machine, a command other than `docs` first
     prints the two lines of `FIRST_USE`."""
     parser = _build_parser()

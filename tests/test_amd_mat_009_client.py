@@ -86,7 +86,7 @@ def test_item_5_ask_prints_the_job_a_turn_started_and_follow_writes_its_folder(s
         "",
         f"Job 2 started from version 6 of this session's text ({second}); "
         f"follow it with: matsya job wait {second}",
-        f"{MODEL} · version 6 · job 2 · not_converged ({second}), session {session_id}",
+        f"{MODEL} · stage · version 6 · job 2 · not_converged ({second}), session {session_id}",
         "The job ended not_converged, with the reason cycle_limit_reached.",
         "Files of the last cycle: example.bl, methods.yml, note.md",
         f"Write the model folder and its report with: matsya job files {second} <folder>",
@@ -101,7 +101,7 @@ def test_item_5_ask_prints_the_job_a_turn_started_and_follow_writes_its_folder(s
     held = json.loads((folder / "record.json").read_text(encoding="utf-8"))
     assert (held["id"], held["result"]) == (second, products_of(RECORDS["not_converged"]))
     assert (folder / "report.md").read_text(encoding="utf-8").splitlines()[4] == (
-        f"{MODEL} · version 6 · job 2 · not_converged ({second}), session {session_id}"
+        f"{MODEL} · stage · version 6 · job 2 · not_converged ({second}), session {session_id}"
     )
 
     # --json prints the turn's answer; the steps go to the standard error

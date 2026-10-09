@@ -3,9 +3,13 @@
 The package's source is put first on the import path, so that the tests read
 it whether or not the package is installed. `stand_in` starts a stand-in of
 the Matsya service of spec 0.3 on the loopback address, which answers each
-route with the form of `packages/matsya/matsya_service/api.py`; its jobs end
-with the records of this module, which a job returns in the products view by
-default and whole with `view=full` (AMD-MAT-010 §3), and `products_of`
+route with the form of `packages/matsya/matsya_service/api.py`; it refuses a
+job request that names no target, or a paper sent in another form than its
+text, as the service does, and its jobs end with the records of this module,
+in the form of the service's record `matsya-model-iteration/6`, each
+carrying the target its request named (AMD-MAT-011 §3) and a paper's record
+its `references` (AMD-MAT-012 §2), which a job returns in the products view
+by default and whole with `view=full` (AMD-MAT-010 §3), and `products_of`
 reduces a record as the service's `products_view` does. `service`
 starts the Matsya service itself under the test configuration of
 `packages/matsya/tests/fixtures/`, with a scripted caller in place of the
@@ -105,9 +109,10 @@ ROUTES = (
     ("GET", r"/v1/model-iterations/(?P<job_id>[^/]+)", "job"),
     ("POST", r"/v1/model-iterations/(?P<job_id>[^/]+)/cancel", "cancel"),
 )
-# the keys of a job's label (AMD-MAT-008 §2), the states in which a job has
-# ended and those in which it holds a record (AMD-MAT-008 §4)
-LABEL_KEYS = ("model", "revision", "number", "state", "overtaken", "text")
+# the keys of a job's label (AMD-MAT-008 §2), the target after the model's
+# name (AMD-MAT-011 §3), the states in which a job has ended and those in
+# which it holds a record (AMD-MAT-008 §4)
+LABEL_KEYS = ("model", "target", "revision", "number", "state", "overtaken", "text")
 JOB_ENDED = ("converged", "not_converged", "needs_input", "cancelled", "failed", "interrupted")
 RECORD_STATES = ("converged", "not_converged", "needs_input", "cancelled")
 JOB_FIELDS = {
@@ -116,10 +121,27 @@ JOB_FIELDS = {
     "starting_declaration",
     "model_key",
     "source_cluster",
-    "target_formulation",
+    "formulation",
+    "target",
     "session",
     "force",
 }
+# the four targets of a job, as `TARGETS` of the service's `meaning.py` gives
+# them, and the sentence with which the service refuses a request that names
+# none or another word, `TARGET_REFUSAL` of its `processor.py` (AMD-MAT-011
+# §3)
+TARGETS = ("stage", "period", "trellis", "recipe")
+TARGET_REFUSAL = "target must be stage, period, trellis or recipe"
+# the sentence with which the service refuses a paper sent in another form
+# than its text, `PAPER_AS_TEXT` of its `source.py`, and the fields of those
+# earlier forms, numbered pages and the PDF's bytes, the second written in
+# two parts so that no file of the client holds the former field's name
+# (AMD-MAT-012 §2)
+PAPER_AS_TEXT = "A paper is sent as text: source.text holds the paper in Markdown or LaTeX"
+EARLIER_PAPER_FORMS = ("pages", "pdf" + "_base64")
+# the schema of a job's record, `SCHEMA` of the service's `processor.py`
+# (REQ-MAT-034)
+SCHEMA = "matsya-model-iteration/6"
 TURN_FIELDS = {"question", "stage_file", "refusal", "timing", "package_version", "index_digest", "delivery_id"}
 # the most cycles a job request may name, `cycle_maximum` of the service's
 # configuration
@@ -128,7 +150,7 @@ CYCLE_MAXIMUM = 5
 
 # ---------------------------------------------------------------------------
 # the records with which the stand-in's jobs end, in the form of the
-# service's record `matsya-model-iteration/5` (REQ-MAT-034)
+# service's record `matsya-model-iteration/6` (REQ-MAT-034)
 
 PREPARER = "SourceMaterial_to_BellmanStageProse"
 WRITER = "BellmanStageProse_to_BellmanSYMDeclaration"
@@ -149,6 +171,26 @@ JUDGE_ITEMS = (
 OBSERVED = "The agent observes x before choosing u."
 OMITTED = "The continuation state a equals x_d plus the two components of u."
 SHOCK = "Labor income is subject to a permanent and a transitory shock."
+# a paper's text in Markdown and the same paper in LaTeX, which a job's
+# request or a session's entry holds as the file holds it, and the
+# references of the stand-in's record of a paper: the passage of the
+# Markdown paper that its model prose rests on, with the heading it stands
+# under and the lines it stands on (AMD-MAT-012 §2)
+PAPER = (
+    "# Saving under income risk\n"
+    "\n"
+    "## 1 The household's problem\n"
+    "\n"
+    f"{SHOCK} The household chooses consumption out of cash on hand.\n"
+)
+LATEX = (
+    "\\documentclass{article}\n"
+    "\\begin{document}\n"
+    "\\section{The household's problem}\n"
+    f"{SHOCK} The household chooses consumption out of cash on hand.\n"
+    "\\end{document}\n"
+)
+PAPER_REFERENCES = [{"heading": "## 1 The household's problem", "lines": [5, 5], "point": SHOCK}]
 MODEL_PROSE = (
     "## States\n"
     f"The arrival state is x, and the decision state x_d equals it. {OBSERVED}\n\n"
@@ -165,9 +207,10 @@ NOTE = "The timing of the second control is left open.\n"
 METHODS = "policy: !egm\n"
 FIRST_STAGE = STAGE.replace("x_d = x\n", "x_d = x + 1\n")
 ROUND_TRIP_STAGE = STAGE.replace("x_d = x\n", "x_d = 2 * x\n")
-# the files of a model of two stages, with the period, trellis, calibration,
-# settings and methods files a later writer may return
-TRELLIS_FILES = {
+# the files of the recipe of a model of two stages in one period: the stage,
+# period and trellis files, a calibration, a settings file, one stage's
+# methods file and the recipe `spec.yml` (AMD-MAT-011 §2)
+RECIPE_FILES = {
     "household.bl": STAGE.replace("@stage: example", "@stage: household"),
     "firm.bl": STAGE.replace("@stage: example", "@stage: firm"),
     "period.yml": "!period\nname: year\nstages:\n  - household\n  - firm\n",
@@ -175,7 +218,23 @@ TRELLIS_FILES = {
     "calibration/base.yml": "β: 0.96\n",
     "settings/base.yml": "n_a: 50\n",
     "stages/household/methods.yml": METHODS,
+    "spec.yml": (
+        "trellis: trellis.yml\n"
+        "stages:\n"
+        "  household: {stage: stages/household/household.bl, calibration: {all: [calibration/base]}, "
+        "settings: {all: [settings/base]}, methods: {all: [stages/household/methods]}}\n"
+        "  firm: {stage: stages/firm/firm.bl, calibration: {all: [calibration/base]}}\n"
+    ),
     "note.md": "The wage w is taken as given.\n",
+}
+# the structure each record's model prose states, as the service's record
+# holds it (AMD-MAT-011 §2): the one stage `example`, and the two stages of
+# the recipe in one period
+ONE_STAGE = {"periods": [{"name": "main", "stages": ["example"]}], "stages": ["example"], "level": "stage"}
+TWO_STAGES = {
+    "periods": [{"name": "year", "stages": ["household", "firm"]}],
+    "stages": ["household", "firm"],
+    "level": "period",
 }
 REFUSAL = {
     "call": 5,
@@ -297,11 +356,15 @@ def usage_record(calls: dict[str, int], refusal: dict | None = None) -> dict:
 
 
 def job_record(status: str, reason: str, cycles: list, **fields) -> dict:
-    """A finished job's record of a typed description, with the fields given."""
+    """A finished job's record of a typed description of the one-stage model
+    at the target `stage`, which takes no reference, with the fields
+    given."""
     return {
-        "schema": "matsya-model-iteration/5",
-        "target_formulation": None,
-        "source": {"kind": "description", "sha256": "1" * 64},
+        "schema": SCHEMA,
+        "target": "stage",
+        "formulation": None,
+        "structure": ONE_STAGE,
+        "source": {"kind": "description", "sha256": ["1" * 64]},
         "session": None,
         "versions": {"configuration": {"version": "0.3.7"}},
         "retrieval": {"index_digest": DIGEST},
@@ -309,7 +372,7 @@ def job_record(status: str, reason: str, cycles: list, **fields) -> dict:
         "calls": [{"step": "writing", "cycle": 1, "role": WRITER}],
         "cycles": cycles,
         "description": MODEL_PROSE,
-        "page_references": [],
+        "references": [],
         "paper_source_check": AGREEING,
         "paper_form_check": {"passed": True, "findings": [], "words": 41},
         "status": status,
@@ -339,9 +402,13 @@ FIRST_CYCLE = cycle_record(
 # of two cycles that reaches its cycle limit with an omission and a
 # contradiction of the prose-roundtrip-judge, a round-trip difference and a
 # note left open, a job that asks a question, a cancelled job, a paper whose
-# model prose the prose-source-judge finds to differ from it, a model of two
-# stages whose job a language-model token ceiling stopped after its first
-# writing, and a record naming a file outside the folder
+# model prose the prose-source-judge finds to differ from it, with the
+# references of `PAPER_REFERENCES`, the recipe of
+# a model of two stages whose job a language-model token ceiling stopped
+# after its first writing, and a record naming a file outside the folder.
+# Each carries the target its files are those of, `recipe` for the recipe
+# and `stage` for the others, and the structure its accepted model prose
+# states, `None` where preparation accepted none (AMD-MAT-011 §§2 and 3)
 RECORDS = {
     "converged": job_record(
         "converged",
@@ -375,14 +442,18 @@ RECORDS = {
         ],
     ),
     "needs_input": {
-        "schema": "matsya-model-iteration/5",
+        "schema": SCHEMA,
+        "target": "stage",
+        "structure": ONE_STAGE,
         "status": "needs_input",
         "reason": "distribution_needs_specification",
         "questions": [QUESTION],
         "cycles": [],
     },
     "cancelled": {
-        "schema": "matsya-model-iteration/5",
+        "schema": SCHEMA,
+        "target": "stage",
+        "structure": None,
         "status": "cancelled",
         "reason": "cancelled_by_user",
         "cycles": [],
@@ -392,24 +463,28 @@ RECORDS = {
         "not_converged",
         "paper_description_differs_from_source",
         [],
-        source={"kind": "paper", "sha256": "2" * 64, "pages": 12, "page_basis": "pdf"},
+        source={"kind": "paper", "sha256": ["2" * 64]},
+        references=PAPER_REFERENCES,
+        structure=None,
         paper_source_check=judged(
             judge_report({"shocks": (1, 0, 0, [SHOCK])}),
             judge_report({"shocks": (0, 1, 0, [SHOCK])}),
         ),
         usage=usage_record({PREPARER: 1, JUDGE: 2}),
     ),
-    "trellis": job_record(
+    "recipe": job_record(
         "not_converged",
         "token_ceiling_reached",
         [
             {
                 "number": 1,
-                "writing": {"rounds": [], "files": TRELLIS_FILES, "citations": [], "digest": "9" * 64},
+                "writing": {"rounds": [], "files": RECIPE_FILES, "citations": [], "digest": "9" * 64},
                 "citations_supported": False,
                 "unresolved_note": True,
             }
         ],
+        target="recipe",
+        structure=TWO_STAGES,
         usage=usage_record({PREPARER: 1, JUDGE: 2, WRITER: 1}, REFUSAL),
     ),
     "outside": job_record(
@@ -427,7 +502,16 @@ RECORDS = {
         ],
     ),
 }
-PRODUCT_FIELDS = ("status", "reason", "description", "questions", "paper_source_check", "paper_form_check")
+PRODUCT_FIELDS = (
+    "target",
+    "structure",
+    "status",
+    "reason",
+    "description",
+    "questions",
+    "paper_source_check",
+    "paper_form_check",
+)
 
 
 def products_of(record: dict) -> dict:
@@ -515,19 +599,29 @@ class StandIn:
     state, a job's present state being the state its latest such request
     returned, or `queued` before the first; and keeps every request
     (`requests`: method, path with its query, headers and JSON body) and the
-    text of every answer (`answers`). A job ends with a record of `RECORDS`:
-    a job from a session `needs_input`, which, when it is current at its
-    end, appends its question to the session, and any other job
-    `converged`, unless `next_ends` names the record of the next job
-    submitted. A reply to that question starts a job that converges. A job's
-    record is returned in the products view, or whole with `view=full`
-    (AMD-MAT-010 §3). A question that asks for a job (`JOB_REQUEST`) starts
-    one from the session, whose version is the session's revision with the
-    question, and the turn's result names it under `job_started`
-    (AMD-MAT-009 §3); any other turn's `job_started` is null. A job of a session carries
-    the label of AMD-MAT-008 §2, its version the session's revision when it
-    first runs; the session's listing gives its jobs as records with their
-    labels and its selected job. The
+    text of every answer (`answers`). A job request names its target, one
+    of `TARGETS`, else it is refused with `TARGET_REFUSAL` and 422, as the
+    service refuses it (AMD-MAT-011 §3). Its source is a description or a
+    paper as its text, and a paper in one of the earlier forms,
+    `EARLIER_PAPER_FORMS`, or without a text is refused with
+    `PAPER_AS_TEXT` and 422, as `_check_source` of the service's
+    `processor.py` refuses it (AMD-MAT-012 §2). A job ends with a record of
+    `RECORDS`, which carries the target the job's request named: a job from
+    a session `needs_input`, which, when it is current at its end, appends
+    its question to the session, and any other job `converged`, unless
+    `next_ends` names the record of the next job submitted. A reply to that
+    question starts a job that converges, with the target of the job that
+    asked, whose request the service copies. A job's record is returned in
+    the products view, or whole with `view=full` (AMD-MAT-010 §3). A
+    question that asks for a job (`JOB_REQUEST`) starts one from the
+    session, whose version is the session's revision with the question,
+    and whose target is the narrowest of the four words the question
+    names, else `stage`, the stand-in of matsya-master's inference; the
+    turn's result names it under `job_started` (AMD-MAT-009 §3); any other
+    turn's `job_started` is null. A job carries the label of AMD-MAT-008 §2
+    with its target, a job of a session its version the session's revision
+    when it first runs; the session's listing gives its jobs as records
+    with their labels and its selected job. The
     cancel route cancels a queued job at once, marks a running one, which
     then ends `cancelled` with a record, and refuses an ended one with 409;
     the selection route takes a job of the session that holds a record, or
@@ -724,7 +818,10 @@ class StandIn:
         entry = self._append(session_id, kind, str(body.get("text", "")).strip(), replies_to=replies_to)
         scheduled = None
         if kind == "user" and held["awaiting_answer"] and replied and replied["kind"] == "question":
-            job_id = self._new_job(session_id, "converged")
+            # the attempt copies the request of the job awaiting an answer,
+            # its target among it (`_schedule` of `jobs.py`)
+            asked = self.jobs[held["awaiting_answer"]]["target"]
+            job_id = self._new_job(session_id, "converged", asked)
             held["awaiting_answer"] = None
             scheduled = {"id": job_id, "status_url": f"/v1/model-iterations/{job_id}"}
         return 200, {**self._listing(session_id), "entry": entry, "repeated": False, "scheduled": scheduled}
@@ -757,8 +854,12 @@ class StandIn:
         started = None
         if JOB_REQUEST in body["question"].casefold():
             # the job's version is fixed at the submission, the question
-            # included (AMD-MAT-009 §3)
-            job_id = self._new_job(session_id, self.next_ends.pop(0) if self.next_ends else "converged")
+            # included (AMD-MAT-009 §3); its target is the narrowest of the
+            # four words the question names, else `stage` (AMD-MAT-011 §3)
+            named = [word for word in TARGETS if re.search(rf"\b{word}\b", body["question"].casefold())]
+            target = named[0] if named else "stage"
+            end = self.next_ends.pop(0) if self.next_ends else "converged"
+            job_id = self._new_job(session_id, end, target)
             self.jobs[job_id]["revision"] = self.sessions[session_id]["revision"]
             started = {"id": job_id, "label": self._label(job_id, "queued")}
         result = {
@@ -824,21 +925,27 @@ class StandIn:
         return job["frames"][self._at(job)]
 
     def _label(self, job_id: str, state: str) -> dict[str, Any]:
-        """A job's label in the form of `job_label` of `jobs.py`."""
+        """A job's label in the form of `job_label` of `jobs.py`: the job's
+        target after the session's name, and for a job of no session its
+        target and its state (AMD-MAT-011 §3)."""
         job = self.jobs[job_id]
+        target = job["target"]
         if job["session"] is None:
-            return dict(zip(LABEL_KEYS, (None, None, None, state, False, state)))
+            text = " · ".join(piece for piece in (target, state) if piece)
+            return dict(zip(LABEL_KEYS, (None, target, None, None, state, False, text)))
         held = self.sessions[job["session"]]
         revision = job["revision"]
         if state == "running":
             overtaken = revision is not None and held["revision"] > revision
         else:
             overtaken = state in RECORD_STATES and state != "cancelled" and job["current"] is False
-        pieces = [held["name"]] + ([f"version {revision}"] if revision is not None else [])
+        pieces = [held["name"], target] + ([f"version {revision}"] if revision is not None else [])
         text = " · ".join(pieces + [f"job {job['number']}", state])
         if overtaken:
             text += ", text changed since" if state == "running" else ", built from an earlier version"
-        return dict(zip(LABEL_KEYS, (held["name"], revision, job["number"], state, overtaken, text)))
+        return dict(
+            zip(LABEL_KEYS, (held["name"], target, revision, job["number"], state, overtaken, text))
+        )
 
     def _shown(self, job_id: str, frame: dict[str, Any]) -> dict[str, Any]:
         """A frame as `GET /v1/model-iterations/{id}` answers it: with the
@@ -857,7 +964,10 @@ class StandIn:
             shown["current"] = job["current"]
         return shown
 
-    def _new_job(self, session_id: str | None, end: str) -> str:
+    def _new_job(self, session_id: str | None, end: str, target: str) -> str:
+        """A job of the session, or of no session, that ends with the record
+        `end` of `RECORDS`, which carries the job's target, as the service's
+        record carries the target of the job's request."""
         job_id = uuid.uuid4().hex
         base = {"id": job_id, "events": [], "created_at": NOW, "updated_at": NOW}
         number = None
@@ -865,7 +975,7 @@ class StandIn:
             base["session"] = session_id
             self.sessions[session_id]["jobs"].append(job_id)
             number = len(self.sessions[session_id]["jobs"])
-        record = RECORDS[end]
+        record = {**RECORDS[end], "target": target}
         queued = {**base, "state": "queued", "progress": None}
         preparing = {**base, "state": "running", "progress": {"step": "preparation", "cycle": 0, "max_cycles": 2}}
         frames = [queued, preparing]
@@ -883,6 +993,7 @@ class StandIn:
             "frames": frames,
             "served": 0,
             "session": session_id,
+            "target": target,
             "number": number,
             "revision": None,
             "current": None,
@@ -895,6 +1006,8 @@ class StandIn:
             return 422, {"detail": "The model request has unsupported fields"}
         if "source" not in body and "session" not in body:
             return 422, {"detail": "The model request needs a source or a session"}
+        if body.get("target") not in TARGETS:
+            return 422, {"detail": TARGET_REFUSAL}
         cycles = body.get("max_cycles")
         if cycles is not None and (type(cycles) is not int or cycles < 1):
             return 422, {"detail": "max_cycles must be a positive integer"}
@@ -909,14 +1022,24 @@ class StandIn:
             if self.sessions[session_id]["revision"] == 0:
                 return 422, {"detail": "The session holds no text"}
         else:
+            # the checks of `_check_source` of the service's `processor.py`
+            # (AMD-MAT-012 §2)
             source = body["source"]
-            if source.get("kind") == "description":
-                if set(source) != {"kind", "text"} or not str(source.get("text", "")).strip():
-                    return 422, {"detail": "A description needs source.text"}
-            elif source.get("kind") != "paper" or set(source) != {"kind", "pdf_base64"}:
-                return 422, {"detail": "A paper accepts kind and one source form"}
+            if not isinstance(source, dict):
+                return 422, {"detail": "The source must be an object"}
+            kind = source.get("kind")
+            if kind not in ("description", "paper"):
+                return 422, {"detail": "source.kind must be description or paper"}
+            if kind == "paper" and (
+                any(form in source for form in EARLIER_PAPER_FORMS) or "text" not in source
+            ):
+                return 422, {"detail": PAPER_AS_TEXT}
+            if set(source) != {"kind", "text"}:
+                return 422, {"detail": f"A {kind} accepts kind and text only"}
+            if not isinstance(source["text"], str) or not source["text"].strip():
+                return 422, {"detail": f"A {kind} needs source.text"}
         end = self.next_ends.pop(0) if self.next_ends else ("needs_input" if session_id else "converged")
-        job_id = self._new_job(session_id, end)
+        job_id = self._new_job(session_id, end, body["target"])
         return 202, {"id": job_id, "state": "queued", "status_url": f"/v1/model-iterations/{job_id}"}
 
     def _job(self, body: Any, job_id: str, query: dict[str, str] | None = None) -> tuple[int, Any]:
@@ -967,7 +1090,8 @@ class StandIn:
                 job["current"] = False
             return 200, self._shown(job_id, cancelled)
         if present["state"] == "running":
-            ended = {**present, "state": "cancelled", "result": RECORDS["cancelled"]}
+            record = {**RECORDS["cancelled"], "target": job["target"]}
+            ended = {**present, "state": "cancelled", "result": record}
             job.update(frames=job["frames"][: self._at(job) + 1] + [ended], cancel_requested=True)
             return 200, self._shown(job_id, present)
         return 409, {"detail": "The job has ended"}
@@ -1039,8 +1163,11 @@ def service(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     scripted caller in place of the model provider, served by uvicorn on the
     loopback address; and a user whose Matsya token it accepts. The caller
     holds the replies of one job that converges in one cycle; a test adds the
-    reply of a turn to `caller.replies`. `application` is the service's
-    application, whose `state.runner` is its job runner."""
+    reply of a turn to `caller.replies`. `description` is the job's source
+    material and `model_prose` the model prose the scripted
+    Model-prose-writer writes from it, which opens with the heading
+    Structure (AMD-MAT-011 §3). `application` is the service's application,
+    whose `state.runner` is its job runner."""
     uvicorn = pytest.importorskip("uvicorn")
     pytest.importorskip("matsya_service")
     if not (SERVICE_TESTS / "scripted.py").is_file():
@@ -1051,7 +1178,7 @@ def service(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     from matsya_service.configuration import write_manifest
     from matsya_service.processor import ModelProcessor
     from matsya_service.retrieval import activate_candidate, build_candidate, load_active
-    from scripted import DESCRIPTION, ScriptedCaller, converging
+    from scripted import DESCRIPTION, MODEL_PROSE, ScriptedCaller, converging
 
     folder = tmp_path / "configuration"
     shutil.copytree(
@@ -1132,6 +1259,7 @@ def service(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         caller=caller,
         role=ROLE,
         description=DESCRIPTION,
+        model_prose=MODEL_PROSE,
         application=application,
     )
     server.should_exit = True

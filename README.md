@@ -67,15 +67,17 @@ In Claude Code, open the folder that holds your model's description and type at 
 Ask matsya how it works, read its instructions, and then use the matsya command for me.
 ```
 
-Claude Code runs `matsya`, which points it to the guide; it reads the guide with `matsya docs --all`; and it is then ready. From then on, say what you want in your own words. For example:
+Claude Code runs `matsya`, which points it to the guide; it reads the guide with `matsya docs --all`; and it is then ready. From then on, say what you want in your own words.
+
+Every job names its **target**, the level of the declaration it returns: `stage`, one stage file, which states one decision problem; `period`, the stage files of one model period and the period file `period.yml` that joins them; `trellis`, the stage files, the period files and `trellis.yml`, which orders the periods in time up to the terminal period; or `recipe`, the files of a trellis together with a methods file for each stage whose solution method the source states (a stage without one is admitted), the calibration and settings files, and the recipe file `spec.yml` that names them for each stage. Name the target when you ask for a build. For example:
 
 ```
-Build the model described in economics.md.
+Build the model described in economics.md as a trellis.
 ```
 
-Claude Code runs `matsya job submit economics.md`, follows the job to its end, and then runs `matsya job files <job> <new folder>`, which writes the proposed stage files, the model prose and `report.md` into a folder of yours; it reports the job's final state (a finished job is not necessarily a converged one) and shows you the report and, when the job reached the writing step, the stage files to compare with the model you intended; a job that stopped earlier to ask for input leaves `report.md` and the record and no stage file.
+Claude Code runs `matsya job submit economics.md --target trellis`, follows the job to its end, and then runs `matsya job files <job> <new folder>`, which writes the files of the target, the model prose and `report.md` into a folder of yours; it reports the job's final state (a finished job is not necessarily a converged one) and shows you the report and, when the job reached the writing step, the files it wrote, to compare with the model you intended; a job that stopped earlier to ask for input leaves `report.md` and the record and no stage file.
 
-Two things can then happen. If the job ended with questions, because the description left something necessary unsaid, the questions stand in the session; you answer them and the next job starts from your answer:
+Two things can then happen. If the job ended with questions, because the description left something necessary unsaid, the questions stand in the session; you answer them and the next job starts from your answer, at the same target:
 
 ```
 Answer matsya-architect's first question: the gross return on assets is R, and assets cannot be negative.
@@ -95,7 +97,9 @@ The guide the assistant reads is installed with the command; it is also online a
 
 ## 4 Or run the commands yourself
 
-Every command is also meant to be typed by hand. `matsya --help` lists them, and the user guide explains each with what it prints. The four you will use most are `matsya job submit model.md`, which has the model described in the file built and checked, `matsya job wait <job>`, which follows that work to its end, `matsya job files <job> <new folder>`, which writes the proposed stage files, the model prose and the report into a folder of yours, and `matsya ask <session> "your question"`, which asks a question about a model in the session the first command created.
+Every command is also meant to be typed by hand. `matsya --help` lists them, and the user guide explains each with what it prints. The four you will use most are `matsya job submit model.md --target trellis`, which has the model described in the file built and checked at the target named, `matsya job wait <job>`, which follows that work to its end, `matsya job files <job> <new folder>`, which writes the files of the target, the model prose and the report into a folder of yours, and `matsya ask <session> "your question"`, which asks a question about a model in the session the first command created. `matsya job submit` refuses a job whose command names no target, and prints the four targets.
+
+A paper is submitted as its text, in a Markdown or LaTeX file, with the option `--paper`: `matsya job submit paper.md --paper --target stage` appends the paper to a new session as an entry of the kind `paper` and starts the job from that session; the job reads the session's text as a paper, and its questions stand in the session, as any other job's do. Without `--paper`, a file is a description. A PDF is refused before any request, with the sentence `A paper is sent as Markdown or LaTeX text; convert the PDF first.`, so convert it to Markdown or LaTeX before you submit it. The paper's text is sent to the language-model provider; ask the service's administrator before you submit a paper that may not leave your machine.
 
 ## Source and license
 

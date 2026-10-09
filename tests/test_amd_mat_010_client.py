@@ -4,8 +4,9 @@ job with questions, against the stand-in of the service, whose jobs end with
 the records of `conftest.py` and return them in the products view by default
 and whole with `view=full`; the placement of the files of a model of two
 stages and the refusal of a name outside the folder; the refusal of a
-symbolic link within the folder, with and without `--overwrite`; `job wait`,
-which prints the report's first two headings at a job's end (§5); and the
+symbolic link within the folder, with and without `--overwrite`, and of one
+put at a file's name after the check; `job wait`, which prints the
+report's first two headings at a job's end (§5); and the
 stand-in's reduction of each record, compared with the service's
 `products_view` where the service's package is installed. Item 3 against the
 service itself is in `test_acceptance.py`."""
@@ -13,6 +14,7 @@ service itself is in `test_acceptance.py`."""
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 
@@ -24,13 +26,14 @@ from conftest import (
     METHODS,
     MODEL_PROSE,
     NOTE,
+    PAPER,
     QUESTION,
+    RECIPE_FILES,
     RECORDS,
     ROUND_TRIP_PROSE,
     ROUND_TRIP_STAGE,
     SHOCK,
     STAGE,
-    TRELLIS_FILES,
     products_of,
 )
 from matsya.client import MatsyaClient
@@ -43,7 +46,7 @@ REPORT = """# Report of the job
 
 ## The job
 
-Household with firms · version 1 · job 1 · not_converged (<job>), session <session>
+Household with firms · stage · version 1 · job 1 · not_converged (<job>), session <session>
 
 ## Status
 
@@ -125,7 +128,7 @@ CONVERGED_REPORT = """# Report of the job
 
 ## The job
 
-Household with firms · version 1 · job 1 · converged (<job>), session <session>
+Household with firms · stage · version 1 · job 1 · converged (<job>), session <session>
 
 ## Status
 
@@ -185,17 +188,17 @@ def _files(folder: Path) -> dict[str, str]:
     }
 
 
-def _ended_job(stand_in, run, tmp_path: Path, end: str) -> tuple[str, str]:
+def _ended_job(stand_in, run, tmp_path: Path, end: str, target: str = "stage") -> tuple[str, str]:
     """A job of a new session, `Household with firms`, holding one entry,
-    which ends with the record `end` of `RECORDS`; the job's identifier and
-    the session's."""
+    submitted with the target `target`, which ends with the record `end` of
+    `RECORDS`; the job's identifier and the session's."""
     status, out, _ = run("session", "new", MODEL)
     session_id = _identifier(rf"^Session ([0-9a-f]{{32}}): {MODEL}$", out)
     entry = tmp_path / "entry.md"
     entry.write_text("A household works for a firm.\n", encoding="utf-8")
     assert run("session", "add", session_id, str(entry))[0] == 0
     stand_in.next_ends.append(end)
-    status, out, _ = run("job", "submit", "--session", session_id)
+    status, out, _ = run("job", "submit", "--session", session_id, "--target", target)
     job_id = _identifier(r"^Job ([0-9a-f]{32}): queued$", out)
     assert run("job", "wait", job_id, "--interval", "0")[0] == 0
     stand_in.requests.clear()
@@ -235,7 +238,7 @@ def test_item_3_the_model_folder_with_and_without_the_iterates(stand_in, run, tm
         "declaration/stages/example/example.md": NOTE,
         "declaration/stages/example/methods.yml": METHODS,
         "economics.md": (
-            f'---\njob: "{job_id}"\nlabel: "{MODEL} · version 1 · job 1 · not_converged"\n'
+            f'---\njob: "{job_id}"\nlabel: "{MODEL} · stage · version 1 · job 1 · not_converged"\n'
             f'session: "{session_id}"\nversion: 1\ndate: 2026-10-09\n---\n\n' + MODEL_PROSE
         ),
         "record.json": json.dumps(products, indent=2, ensure_ascii=False) + "\n",
@@ -333,7 +336,7 @@ def test_item_4_the_report(stand_in, run, tmp_path) -> None:
     # job wait and job status print the content of the first two headings
     status, out, _ = run("job", "wait", job_id, "--interval", "0")
     assert out.splitlines() == [
-        f"{MODEL} · version 1 · job 1 · converged ({job_id}), session {session_id}",
+        f"{MODEL} · stage · version 1 · job 1 · converged ({job_id}), session {session_id}",
         "The job ended converged, with the reason source_agreement_and_semantic_fixed_point.",
         "Files of the last cycle: example.bl, note.md",
         f"Write the model folder and its report with: matsya job files {job_id} <folder>",
@@ -352,10 +355,10 @@ def test_item_5_a_papers_job_and_a_job_with_questions(stand_in, run, tmp_path) -
     without model prose holds no `economics.md`; a writer's note that the
     record marks unresolved and holds no text of is stated by a fixed
     sentence."""
-    pdf = tmp_path / "paper.pdf"
-    pdf.write_bytes(b"%PDF-1.4\nscripted text\n")
+    paper = tmp_path / "paper.md"
+    paper.write_text(PAPER, encoding="utf-8")
     stand_in.next_ends.append("paper")
-    status, out, _ = run("job", "submit", str(pdf))
+    status, out, _ = run("job", "submit", str(paper), "--paper", "--no-session", "--target", "stage")
     paper_job = _identifier(r"^Job ([0-9a-f]{32}): queued$", out)
     assert run("job", "wait", paper_job, "--interval", "0")[0] == 0
     folder = tmp_path / "paper"
@@ -364,7 +367,7 @@ def test_item_5_a_papers_job_and_a_job_with_questions(stand_in, run, tmp_path) -
     report = (folder / "report.md").read_text(encoding="utf-8")
     start, end = report.index("## What did not match"), report.index("## The round-trip comparison")
     assert report.splitlines()[4:11] == [
-        f"not_converged ({paper_job}), no session",
+        f"stage · not_converged ({paper_job}), no session",
         "",
         "## Status",
         "",
@@ -422,26 +425,27 @@ def test_item_5_a_papers_job_and_a_job_with_questions(stand_in, run, tmp_path) -
 
 
 def test_the_files_of_two_stages_are_placed_by_name_and_a_name_outside_is_refused(stand_in, run, tmp_path) -> None:
-    """The files of a model of two stages stand in the layout of the
+    """The files of a recipe of two stages stand in the layout of the
     applications: each stage file in its stage's folder, the period,
-    trellis, calibration and settings files under `declaration/`, a stage's
-    methods file in its folder, and the note, which belongs to no single
-    stage, as `declaration/notes.md`; the report states the ceiling's
-    refusal and the quotation the stage files lack. A record that names a
-    file outside the folder writes nothing."""
-    job_id, _ = _ended_job(stand_in, run, tmp_path, "trellis")
-    folder = tmp_path / "trellis"
+    trellis, recipe, calibration and settings files under `declaration/`, a
+    stage's methods file in its folder, and the note, which belongs to no
+    single stage, as `declaration/notes.md`; the report states the
+    ceiling's refusal and the quotation the stage files lack. A record that
+    names a file outside the folder writes nothing."""
+    job_id, _ = _ended_job(stand_in, run, tmp_path, "recipe", "recipe")
+    folder = tmp_path / "recipe"
     assert run("job", "files", job_id, str(folder))[0] == 0
     written = _files(folder)
     assert {path: text for path, text in written.items() if path.startswith("declaration/")} == {
-        "declaration/calibration/base.yml": TRELLIS_FILES["calibration/base.yml"],
-        "declaration/notes.md": TRELLIS_FILES["note.md"],
-        "declaration/period.yml": TRELLIS_FILES["period.yml"],
-        "declaration/settings/base.yml": TRELLIS_FILES["settings/base.yml"],
-        "declaration/stages/firm/firm.bl": TRELLIS_FILES["firm.bl"],
-        "declaration/stages/household/household.bl": TRELLIS_FILES["household.bl"],
-        "declaration/stages/household/methods.yml": TRELLIS_FILES["stages/household/methods.yml"],
-        "declaration/trellis.yml": TRELLIS_FILES["trellis.yml"],
+        "declaration/calibration/base.yml": RECIPE_FILES["calibration/base.yml"],
+        "declaration/notes.md": RECIPE_FILES["note.md"],
+        "declaration/period.yml": RECIPE_FILES["period.yml"],
+        "declaration/settings/base.yml": RECIPE_FILES["settings/base.yml"],
+        "declaration/spec.yml": RECIPE_FILES["spec.yml"],
+        "declaration/stages/firm/firm.bl": RECIPE_FILES["firm.bl"],
+        "declaration/stages/household/household.bl": RECIPE_FILES["household.bl"],
+        "declaration/stages/household/methods.yml": RECIPE_FILES["stages/household/methods.yml"],
+        "declaration/trellis.yml": RECIPE_FILES["trellis.yml"],
     }
     report = written["report.md"]
     assert (
@@ -503,6 +507,36 @@ def test_a_symbolic_link_in_the_folder_is_refused_with_and_without_overwrite(sta
         (folder / link).unlink()
         if link == "report.md":
             (folder / "declaration").symlink_to(outside, target_is_directory=True)
+
+
+@pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="the system lacks O_NOFOLLOW")
+def test_a_symbolic_link_put_at_a_files_name_after_the_check_is_refused(
+    stand_in, run, tmp_path, monkeypatch
+) -> None:
+    """A symbolic link put at the report's path after `_check_targets` has
+    checked the paths, while the files are written, is not followed: the
+    report is opened without following a link at its name, the link is
+    refused with the check's message, and the file outside the folder
+    stays as it was."""
+    job_id, _ = _ended_job(stand_in, run, tmp_path, "not_converged")
+    outside = tmp_path / "outside.md"
+    outside.write_text("mine\n", encoding="utf-8")
+    folder = tmp_path / "proposed"
+    folder.mkdir()
+    checked = matsya.client._check_targets
+
+    def check_then_link(within: Path, paths: list[str]) -> None:
+        checked(within, paths)
+        (folder / "report.md").symlink_to(outside)
+
+    monkeypatch.setattr("matsya.client._check_targets", check_then_link)
+    status, out, err = run("job", "files", job_id, str(folder))
+    assert (status, out) == (1, "")
+    assert err == (
+        f"Error: {folder / 'report.md'} is a symbolic link; the model folder writes no file "
+        f"through a symbolic link, whose target may lie outside {folder}.\n"
+    )
+    assert outside.read_text(encoding="utf-8") == "mine\n"
 
 
 def test_the_stand_in_reduces_each_record_as_the_service_does() -> None:

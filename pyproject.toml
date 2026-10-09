@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "econ-ark-matsya"
-version = "0.6.0"
+version = "0.8.0"
 description = "Command and Python client of the Matsya service of spec 0.3: the index, jobs of architect mode, sessions and conversation turns"
 readme = "README.md"
 requires-python = ">=3.10"

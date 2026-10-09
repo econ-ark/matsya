@@ -37,10 +37,10 @@ It prints the digest of the retrieval index the service reads, the identity of t
 Write the model's description in a Markdown file, with the states, the choices, the constraints, the shocks, the timing and the objective in prose and displayed equations. Then:
 
 ```
-matsya job submit model.md
+matsya job submit model.md --target stage
 ```
 
-The command creates a session named `model`, after the file, appends the file's text to it as entry 1, and starts a job from that session. It prints the session's identifier and name, the entry's number, the job's identifier and its state `queued`, and two lines: how to follow the job, and how to see the session, where the job's questions and your replies are kept. `--name "Household with firms"` gives the session another name; `--max-cycles 2` limits the cycles of writing and checking; `--no-session` submits the file as the job's source with no session, in which case the job's questions stand in its record only.
+The option `--target` names what the job is to return, a **stage**, one decision problem in one file; a **period**, the stages of one model period with their connections; a **trellis**, the periods in time; or a **recipe**, the trellis with the methods, calibration and settings the Workbench loads; the command refuses a submission that names none. The command creates a session named `model`, after the file, appends the file's text to it as entry 1, and starts a job from that session. It prints the session's identifier and name, the entry's number, the job's identifier and its state `queued`, and two lines: how to follow the job, and how to see the session, where the job's questions and your replies are kept. `--name "Household with firms"` gives the session another name; `--max-cycles 2` limits the cycles of writing and checking; `--no-session` submits the file as the job's source with no session, in which case the job's questions stand in its record only.
 
 ```
 matsya job wait <job>
@@ -104,11 +104,15 @@ A job cancelled while it runs keeps its record and the usage of the calls it had
 
 ## 7 A paper
 
+A paper is submitted as its text, in a Markdown or LaTeX file, and marked as a paper with `--paper`:
+
 ```
-matsya job submit paper.pdf
+matsya job submit paper.md --paper --target stage
 ```
 
-A PDF is submitted as the job's source with no session, since a PDF cannot yet be attached to a session, so its questions stand in its record only, where `matsya job status` prints them. The paper's text is sent to the language-model provider; ask the service's administrator before submitting a paper that may not leave your machine.
+The command creates a session named `paper`, after the file, appends the paper's text to it as an entry of the kind `paper`, and starts the job from that session; `--name` gives the session another name, and `--session <session>` appends the paper to a session you already have and starts the job from it. The job reads the session's text as a paper: the Model-prose-writer quotes the passages of the paper on which the model prose rests, each with the heading it stands under where a heading stands above it, and the job goes on only when every quotation is found in the session's text and, where a heading is given with it, under that heading. Because the paper is an entry of the session, a job that ends `needs_input` appends its questions to the session after the paper; you reply to them there as §3 describes, and ask about the paper and the job's outputs in the same session (§4). `--no-session` sends the paper as the job's source with no session, and its questions then stand in its record only. Without `--paper` a file is a description. `matsya session add <session> paper.md --kind paper` appends a paper to a session without starting a job.
+
+A PDF is refused before any request, with the sentence `A paper is sent as Markdown or LaTeX text; convert the PDF first.`; convert it to Markdown or LaTeX and submit that file. The paper's text is sent to the language-model provider; ask the service's administrator before submitting a paper that may not leave your machine.
 
 ## 8 The commands
 
@@ -118,7 +122,7 @@ A PDF is submitted as the job's source with no session, since a PDF cannot yet b
 | `matsya configure` | saves your Matsya token and the service's address |
 | `matsya index` | the index the service reads, the embedding model and the configuration's version |
 | `matsya search "<query>" [--collections …] [--limit n]` | the passages of the index that match a query |
-| `matsya job submit <file> [--name …] [--max-cycles n] [--no-session]`, `matsya job submit --session <session>` | starts a job, from a file through a session it creates, or from a session's text |
+| `matsya job submit <file> --target <stage\|period\|trellis\|recipe> [--paper] [--name …] [--max-cycles n] [--no-session]`, `matsya job submit --session <session> --target …` | starts a job, from a file through a session it creates, or from a session's text |
 | `matsya job status <job>`, `matsya job wait <job>` | a job's state, once or until it ends |
 | `matsya job files <job> <folder> [--all-iterates] [--overwrite]` | writes the products, the report and the record into a folder |
 | `matsya job cancel <job>` | cancels a queued or running job |

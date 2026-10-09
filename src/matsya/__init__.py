@@ -1,152 +1,237 @@
-"""Matsya — CLI and Python API for the Matsya research RAG.
+"""Matsya: the command `matsya` and the Python functions of the Matsya
+service of spec 0.3.
 
-Public API
-----------
-.. autofunction:: ask
-.. autofunction:: search
-.. autofunction:: sessions
-.. autofunction:: session_history
+Each function below reads the Matsya token and the service address from the
+user's configuration file, which `matsya configure` writes, or from the
+environment variables MATSYA_TOKEN and MATSYA_SERVER, which override it. It
+sends one request; or, for `start_job`, up to three, the session, the entry
+and the job; or, for `wait_job` and `ask`, one request every few seconds
+until the job or the turn has ended; and returns the service's JSON answer.
+`job_files` writes an ended job's model folder and returns the paths it
+wrote, and `report_text` composes the folder's report from a job in the
+products view without any request (AMD-MAT-010 §§4 and 5). `MatsyaClient`
+takes an explicit Matsya token and service address instead, and holds the
+same operations as methods.
 """
 
 from __future__ import annotations
 
-import os
-from typing import Any
+from pathlib import Path
+from typing import Any, Callable
 
-from matsya.client import MatsyaClient
-from matsya.config import load_config
+from matsya.client import (
+    AuthenticationError,
+    ContextTooLargeError,
+    MatsyaClient,
+    MatsyaError,
+    RateLimitError,
+    ServerError,
+    report_text,
+)
+from matsya.config import ConfigurationError, load_config
 
-__version__ = "0.1.0"
+__version__ = "0.5.0"
 
-__all__ = ["ask", "search", "sessions", "session_history"]
+__all__ = [
+    "AuthenticationError",
+    "ConfigurationError",
+    "ContextTooLargeError",
+    "MatsyaClient",
+    "MatsyaError",
+    "RateLimitError",
+    "ServerError",
+    "add_entry",
+    "ask",
+    "cancel_job",
+    "index",
+    "job",
+    "job_files",
+    "new_session",
+    "passage",
+    "report_text",
+    "search",
+    "select_job",
+    "session",
+    "start_job",
+    "submit_job",
+    "wait_job",
+]
 
 
 def _make_client() -> MatsyaClient:
-    """Build a :class:`MatsyaClient` from config file + env vars."""
+    """A client with the configured Matsya token and service address."""
     cfg = load_config()
-    token = cfg["token"]
-    if not token:
-        raise RuntimeError(
-            "No Matsya token found.  Run `matsya configure` or set "
-            "the MATSYA_TOKEN environment variable."
+    if not cfg["token"]:
+        raise ConfigurationError(
+            "No Matsya token is configured. Run matsya configure, or set the "
+            "environment variable MATSYA_TOKEN."
         )
-    return MatsyaClient(
-        token=token,
-        server_url=cfg["server"],
-        anthropic_key=os.environ.get("MATSYA_ANTHROPIC_KEY"),
-    )
+    return MatsyaClient(token=cfg["token"], server_url=cfg["server"])
 
 
-def ask(
-    query: str,
-    *,
-    session: str | None = None,
-    bst: bool = False,
-    boost: dict[str, float] | None = None,
-    k: int = 15,
-    group: str = "Bellman-DDSL",
-    model: str = "claude-fable-5",
-    think: bool = False,
-    temperature: float = 0.2,
-    context_turns: int = 5,
-    messages: list[dict[str, str]] | None = None,
-) -> str:
-    """Ask Matsya a question and get an LLM-generated answer.
-
-    Parameters
-    ----------
-    query : str
-        The question to ask.
-    session : str, optional
-        Named session for stateful multi-turn conversation.
-    bst : bool
-        Shorthand for ``boost={"BufferStockTheory": 100}, think=True``.
-    boost : dict, optional
-        Mapping of repository names to retrieval weight multipliers.
-    k : int
-        Number of chunks to retrieve (default 15).
-    group : str
-        Repository group to search (default ``"Bellman-DDSL"``).
-    model : str
-        LLM model identifier.
-    think : bool
-        Enable extended thinking (Claude only).
-    temperature : float
-        Sampling temperature 0–1 (default 0.2).
-    context_turns : int
-        Max prior turns to include in session context (default 5).
-    messages : list[dict], optional
-        Full message history for stateless multi-turn chat.  Each dict
-        must have ``"role"`` and ``"content"`` keys.
-
-    Returns
-    -------
-    str
-        The LLM answer text.
-    """
-    if bst:
-        boost = boost or {}
-        boost["BufferStockTheory"] = 100
-        think = True
-
-    client = _make_client()
-
-    if session:
-        resp = client.session_chat(
-            session_name=session,
-            query=query,
-            k=k,
-            group=group,
-            model=model,
-            boost=boost,
-            think=think,
-            temperature=temperature,
-            context_turns=context_turns,
-        )
-        return resp.get("answer", "")
-
-    if messages is not None:
-        msgs = list(messages)
-    else:
-        msgs = [{"role": "user", "content": query}]
-
-    resp = client.chat(
-        messages=msgs,
-        k=k,
-        group=group,
-        model=model,
-        boost=boost,
-        think=think,
-        temperature=temperature,
-    )
-    return resp.get("answer", "")
+def index() -> dict[str, Any]:
+    """The retrieval index and configuration the service reads
+    (`GET /v1/index`; `MatsyaClient.index`)."""
+    return _make_client().index()
 
 
 def search(
     query: str,
-    *,
-    k: int = 15,
-    group: str = "Bellman-DDSL",
-    boost: dict[str, float] | None = None,
-    balanced: bool = False,
-) -> list[dict[str, Any]]:
-    """Run a vector search and return matching chunks (no LLM).
-
-    Returns a list of dicts with keys ``text``, ``score``, ``path``,
-    ``repo``.
-    """
-    client = _make_client()
-    return client.search(query, k=k, group=group, boost=boost, balanced=balanced)
+    limit: int | None = None,
+    collections: list[str] | None = None,
+    source_ids: list[str] | None = None,
+    boosts: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    """The passages of the index that best match `query`
+    (`POST /v1/search`; `MatsyaClient.search`)."""
+    return _make_client().search(
+        query, limit=limit, collections=collections, source_ids=source_ids, boosts=boosts
+    )
 
 
-def sessions() -> list[dict[str, Any]]:
-    """List the authenticated user's sessions."""
-    client = _make_client()
-    return client.list_sessions()
+def passage(passage_id: str, index_digest: str | None = None) -> dict[str, Any]:
+    """One passage of the index (`GET /v1/passages/{passage_id}`;
+    `MatsyaClient.passage`)."""
+    return _make_client().passage(passage_id, index_digest=index_digest)
 
 
-def session_history(name: str) -> list[dict[str, Any]]:
-    """Return the turns for a named session."""
-    client = _make_client()
-    resp = client.get_session(name)
-    return resp.get("turns", [])
+def start_job(
+    path: str | Path,
+    name: str | None = None,
+    session: str | None = None,
+    no_session: bool = False,
+    max_cycles: int | None = None,
+    force: bool | None = None,
+) -> dict[str, Any]:
+    """Start a job of architect mode from a file, as `matsya job submit
+    <file>` does: a Markdown or text file becomes one entry of a new session
+    named after the file, or `name`, or of the existing `session`, and the
+    job starts from that session; `no_session` sends the text as the job's
+    source with no session, and a PDF is sent with no session. Returns the
+    service's answers as ``{"session": ..., "entry": ..., "job": ...}``
+    (`MatsyaClient.start_job`)."""
+    return _make_client().start_job(
+        path,
+        name=name,
+        session=session,
+        no_session=no_session,
+        max_cycles=max_cycles,
+        force=force,
+    )
+
+
+def submit_job(
+    source_text: str | None = None,
+    pdf_path: str | Path | None = None,
+    max_cycles: int | None = None,
+    session: str | None = None,
+    force: bool | None = None,
+) -> dict[str, Any]:
+    """Start a job of architect mode from a description, a paper's PDF or a
+    session (`POST /v1/model-iterations`; `MatsyaClient.submit_job`)."""
+    return _make_client().submit_job(
+        source_text=source_text,
+        pdf_path=pdf_path,
+        max_cycles=max_cycles,
+        session=session,
+        force=force,
+    )
+
+
+def job(job_id: str, view: str = "products") -> dict[str, Any]:
+    """A job's state and, once it has ended, its record in the view `view`:
+    `products`, the default, its final products and the material of its
+    report, or `full`, the record as the service keeps it
+    (`GET /v1/model-iterations/{job_id}?view=...`; `MatsyaClient.job`)."""
+    return _make_client().job(job_id, view=view)
+
+
+def wait_job(
+    job_id: str,
+    interval: float = 5,
+    on_change: Callable[[dict[str, Any]], None] | None = None,
+    timeout: float | None = None,
+) -> dict[str, Any]:
+    """Wait until a job has ended and return the service's last answer on it
+    (`MatsyaClient.wait_job`)."""
+    return _make_client().wait_job(job_id, interval=interval, on_change=on_change, timeout=timeout)
+
+
+def cancel_job(job_id: str) -> dict[str, Any]:
+    """Cancel a queued or running job, and return the job: `cancelled`, or
+    `running` with `cancel_requested` true; a job that has ended raises
+    `MatsyaError` with status 409 (`POST /v1/model-iterations/{job_id}/cancel`;
+    `MatsyaClient.cancel_job`)."""
+    return _make_client().cancel_job(job_id)
+
+
+def job_files(
+    job_id: str, folder: str | Path, overwrite: bool = False, all_iterates: bool = False
+) -> list[Path]:
+    """Write an ended job's model folder into `folder`, new or empty unless
+    `overwrite` is true: `economics.md`, `report.md`, the stage files under
+    `declaration/` and `record.json`, and with `all_iterates` every cycle
+    under `iterates/` with the full record; return the paths written
+    (`MatsyaClient.job_files`)."""
+    return _make_client().job_files(
+        job_id, folder, overwrite=overwrite, all_iterates=all_iterates
+    )
+
+
+def new_session(name: str) -> dict[str, Any]:
+    """A new session of this name (`POST /v1/sessions`;
+    `MatsyaClient.new_session`)."""
+    return _make_client().new_session(name)
+
+
+def add_entry(
+    session_id: str,
+    text: str | None,
+    kind: str = "user",
+    replies_to: int | None = None,
+    delivery_id: str | None = None,
+) -> dict[str, Any]:
+    """Append one entry to a session (`POST /v1/sessions/{session_id}/entries`;
+    `MatsyaClient.add_entry`)."""
+    return _make_client().add_entry(
+        session_id, text, kind=kind, replies_to=replies_to, delivery_id=delivery_id
+    )
+
+
+def session(session_id: str) -> dict[str, Any]:
+    """A session's entries, revision, selected job, jobs with their labels
+    and turns (`GET /v1/sessions/{session_id}`; `MatsyaClient.session`)."""
+    return _make_client().session(session_id)
+
+
+def select_job(session_id: str, job_id: str | None) -> dict[str, Any]:
+    """Select the job of a session whose outputs its questions read, or
+    clear the selection with `None`, and return the session's listing
+    (`POST /v1/sessions/{session_id}/selected-job`;
+    `MatsyaClient.select_job`)."""
+    return _make_client().select_job(session_id, job_id)
+
+
+def ask(
+    session_id: str,
+    question: str,
+    stage_file_path: str | Path | None = None,
+    index_digest: str | None = None,
+    delivery_id: str | None = None,
+    interval: float = 2,
+    on_change: Callable[[dict[str, Any]], None] | None = None,
+    timeout: float | None = None,
+) -> dict[str, Any]:
+    """Ask one question in a session and return the turn once it has ended
+    (`POST /v1/sessions/{session_id}/turns`, then
+    `GET /v1/sessions/{session_id}/turns/{turn_id}`; `MatsyaClient.ask`)."""
+    return _make_client().ask(
+        session_id,
+        question,
+        stage_file_path=stage_file_path,
+        index_digest=index_digest,
+        delivery_id=delivery_id,
+        interval=interval,
+        on_change=on_change,
+        timeout=timeout,
+    )

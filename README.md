@@ -1,8 +1,8 @@
 # Matsya client
 
-Matsya is a service of Project Bellman. It reads an economist's description of a dynamic model, or a paper, writes the model in Bellman-SYM, the project's language for staged Bellman problems, checks what it wrote, and answers questions about models and about the language.  Matsya contains a curated corpus of theoretical and applied knowledge of dynamic programming and skills to communicate that knowledge for the purpose of helping economists develop dynamic models. 
+Matsya is a service of Project Bellman. It reads an economist's description of a dynamic model, or a paper, writes the model in Bellman-SYM, the project's language for staged Bellman problems, checks what it wrote, and answers questions about models and about the language. It holds an index of the project's documentation and of the research literature on dynamic programming, and saved instructions that direct how it writes a model and answers a question, so that it can help an economist develop a dynamic model.
 
-This package installs the command `matsya`, through which you, or the coding assistant working for you, reach the service. Setting it up takes the four steps below, and the first two are done once.
+This package installs the command `matsya`, through which you, or the coding assistant working for you, reach the service. The command runs on your computer. On the server, **matsya-architect** runs a **job**, one attempt to write and check the stage files of a model from its description; **matsya-master** answers questions in a **session**, the saved description, questions and replies of one model. Install and configure the command once, in steps 1 and 2. Then either let your assistant use it, step 3, or run the commands yourself, step 4.
 
 ## 1 Install the command
 
@@ -22,7 +22,14 @@ The service knows you by a **Matsya token**, a string of letters and digits begi
 matsya configure
 ```
 
-and press Enter. The command first prints its title line,
+and press Enter. Because no configuration file exists yet, the command first prints two lines meant for a coding assistant, which no command prints once your Matsya token and the address are saved:
+
+```
+This is the first use of matsya on this machine.
+A model working for the user reads the guide first: matsya docs --all
+```
+
+Next it prints its title line,
 
 ```
 Matsya: save your Matsya token and the service address
@@ -46,9 +53,9 @@ Paste the address and press Enter. The command then prints where it saved the tw
 Matsya token and service address saved to /Users/you/.config/matsya/config.toml
 ```
 
-with your own home folder in place of `/Users/you`, followed by the reminder that the service keeps the entries of your sessions and the records of your jobs, and the line `Check your access with: matsya index`. The two values are saved in that private file only and are never printed again; the token is shown on the screen while you paste it, so paste it where no one is looking over your shoulder.
+with your own home folder in place of `/Users/you`, followed by the reminder that the service keeps the entries of your sessions and the records of your jobs, and the line `Check your access with: matsya index`. The two values are saved in that private file only. The client does not print the Matsya token in later output, though a connection error may show the service's address; the token is shown on the screen while you paste it, so paste it where no one is looking over your shoulder. The client sends the token with each request, and if the address begins `http://` rather than `https://`, the request sends it without encryption.
 
-To check, type `matsya index` and press Enter. When the service accepts you, it prints three lines: the name of the index the service reads, the embedding model, and the configuration's version. When it does not, it prints one line beginning `Error: The service refused the request (401)`, which means the token was mistyped or is not known to the service, or a line saying that the connection failed, which means the address was mistyped or the service is unreachable; in either case type `matsya configure` again and enter the values once more.
+To check, type `matsya index` and press Enter. When the service accepts you, it prints three lines: the index digest, a fingerprint of the indexed material the service reads, the embedding model, and the configuration's version. When it does not, it prints one line beginning `Error: The service refused the request (401)`, which means the token was mistyped or is not known to the service, or a line saying that the connection failed, which means the address was mistyped or the service is unreachable; in either case type `matsya configure` again and enter the values once more.
 
 ## 3 Let your assistant work with Matsya
 
@@ -66,7 +73,17 @@ Claude Code runs `matsya`, which points it to the guide; it reads the guide with
 Build the model described in economics.md.
 ```
 
-Claude Code runs `matsya job submit economics.md`, follows the job to its end, and reports the job's label, its outcome and the architect's questions if it has any.
+Claude Code runs `matsya job submit economics.md`, follows the job to its end, and then runs `matsya job files <job> <new folder>`, which writes the proposed stage files, the model prose and `report.md` into a folder of yours; it reports the job's final state (a finished job is not necessarily a converged one) and shows you the report and the stage files to compare with the model you intended.
+
+Two things can then happen. If the job ended with questions, because the description left something necessary unsaid, the questions stand in the session; you answer them and the next job starts from your answer:
+
+```
+Answer matsya-architect's first question: the gross return on assets is R, and assets cannot be negative.
+```
+
+Claude Code runs `matsya session show <session>` to find the question's entry number, writes your answer to a file, runs `matsya session add <session> <file> --replies-to <entry number>`, which starts the next job, and follows that job with `matsya job wait <new job>`. A reply starts a job only when it answers a question of the latest job that is waiting for input.
+
+If instead the job ran its cycles and its report records what the two judges found, you ask about it:
 
 ```
 What did the two judges disagree on in that job?
@@ -74,18 +91,12 @@ What did the two judges disagree on in that job?
 
 Claude Code runs `matsya ask` in the session the job created and shows you the answer with its citations.
 
-```
-Answer the architect's first question: the gross return on assets is R, and assets cannot be negative.
-```
-
-Claude Code appends your answer to the session as the reply to that question, which starts the next job, and follows it.
-
 The guide the assistant reads is installed with the command; it is also online at <https://econ-ark.github.io/bellman/matsya/user-guide/>.
 
 ## 4 Or run the commands yourself
 
-Every command is also meant to be typed by hand. `matsya --help` lists them, and the user guide explains each with what it prints. The three you will use most are `matsya job submit model.md`, which has the model described in the file built and checked, `matsya job wait <job>`, which follows that work to its end, and `matsya ask <session> "your question"`, which asks a question about a model in the session the first command created.
+Every command is also meant to be typed by hand. `matsya --help` lists them, and the user guide explains each with what it prints. The four you will use most are `matsya job submit model.md`, which has the model described in the file built and checked, `matsya job wait <job>`, which follows that work to its end, `matsya job files <job> <new folder>`, which writes the proposed stage files, the model prose and the report into a folder of yours, and `matsya ask <session> "your question"`, which asks a question about a model in the session the first command created.
 
 ## Source and license
 
-The client is developed in the folder `AI/matsya-acess/client/` of the Bellman project's repository and published here; its version is the one in `pyproject.toml`, tagged at each release. This repository first held an earlier client of the previous Matsya service, whose last commit was `6b1bf86`, under the Apache 2.0 license retained in [LICENSE](LICENSE); the present code calls the routes of the Matsya service of spec 0.3 and no other service.
+The client is developed in the folder `AI/matsya-acess/client/` of the Bellman project's repository and published here; its version is the one in `pyproject.toml`, tagged at each release. This repository first held an earlier client of the previous Matsya service, whose last commit was `6b1bf86`, under the Apache 2.0 license retained in [LICENSE](LICENSE); the present code calls the current Matsya service's `/v1/` routes and no other service.

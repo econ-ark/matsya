@@ -52,13 +52,35 @@ To check, type `matsya index` and press Enter. When the service accepts you, it 
 
 ## 3 Let your assistant work with Matsya
 
-You do not need to learn the commands. A coding assistant such as Claude Code runs them for you.
+You do not need to learn the commands. A coding assistant such as Claude Code runs them for you, and Matsya tells the assistant how: typed alone, `matsya` answers with where its guide is and how to read it. So instruct your assistant to ask Matsya how to read its instructions.
 
-1. Open the folder that holds your model's description in the assistant.
-2. Tell the assistant: "Read the Matsya guide by running `matsya docs --all`, then use the `matsya` command for me."
-3. Say what you want in your own words: "build the model from my description", "what did the judges disagree on", "change the borrowing constraint and build again".
+In Claude Code, open the folder that holds your model's description and type at its prompt:
 
-The assistant reads the guide, which is installed with the command, and runs the commands. The same guide is online at <https://econ-ark.github.io/bellman/matsya/user-guide/>.
+```
+Ask matsya how it works, read its instructions, and then use the matsya command for me.
+```
+
+Claude Code runs `matsya`, which points it to the guide; it reads the guide with `matsya docs --all`; and it is then ready. From then on, say what you want in your own words. For example:
+
+```
+Build the model described in economics.md.
+```
+
+Claude Code runs `matsya job submit economics.md`, follows the job to its end, and reports the job's label, its outcome and the architect's questions if it has any.
+
+```
+What did the two judges disagree on in that job?
+```
+
+Claude Code runs `matsya ask` in the session the job created and shows you the answer with its citations.
+
+```
+Answer the architect's first question: the gross return on assets is R, and assets cannot be negative.
+```
+
+Claude Code appends your answer to the session as the reply to that question, which starts the next job, and follows it.
+
+The guide the assistant reads is installed with the command; it is also online at <https://econ-ark.github.io/bellman/matsya/user-guide/>.
 
 ## 4 Or run the commands yourself
 

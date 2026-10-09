@@ -3,8 +3,9 @@ of the amendment's §7, the model folder, the report, and a paper's job and a
 job with questions, against the stand-in of the service, whose jobs end with
 the records of `conftest.py` and return them in the products view by default
 and whole with `view=full`; the placement of the files of a model of two
-stages and the refusal of a name outside the folder; `job wait`, which
-prints the report's first two headings at a job's end (§5); and the
+stages and the refusal of a name outside the folder; the refusal of a
+symbolic link within the folder, with and without `--overwrite`; `job wait`,
+which prints the report's first two headings at a job's end (§5); and the
 stand-in's reduction of each record, compared with the service's
 `products_view` where the service's package is installed. Item 3 against the
 service itself is in `test_acceptance.py`."""
@@ -470,6 +471,38 @@ def test_the_files_of_two_stages_are_placed_by_name_and_a_name_outside_is_refuse
         "stages/<key>/methods.yml.\n"
     )
     assert not folder.exists()
+
+
+def test_a_symbolic_link_in_the_folder_is_refused_with_and_without_overwrite(stand_in, run, tmp_path) -> None:
+    """A symbolic link within the folder whose target lies outside it, the
+    report's path linked to a file and then `declaration` linked to a
+    folder, writes nothing: without `--overwrite` the folder is refused as
+    not empty before any request, and with it the link is refused before
+    anything is written, so that the targets stay as they were."""
+    job_id, _ = _ended_job(stand_in, run, tmp_path, "not_converged")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "notes.md").write_text("mine\n", encoding="utf-8")
+    folder = tmp_path / "proposed"
+    folder.mkdir()
+    (folder / "report.md").symlink_to(outside / "notes.md")
+
+    status, out, err = run("job", "files", job_id, str(folder))
+    assert (status, out, stand_in.requests) == (1, "", [])
+    assert err.startswith(f"Error: {folder} is not empty;")
+    for link in ("report.md", "declaration"):
+        status, out, err = run("job", "files", job_id, str(folder), "--overwrite")
+        assert (status, out) == (1, "")
+        assert err == (
+            f"Error: {folder / link} is a symbolic link; the model folder writes no file through a "
+            f"symbolic link, whose target may lie outside {folder}.\n"
+        )
+        assert [path.name for path in folder.iterdir()] == [link]
+        assert [path.name for path in outside.iterdir()] == ["notes.md"]
+        assert (outside / "notes.md").read_text(encoding="utf-8") == "mine\n"
+        (folder / link).unlink()
+        if link == "report.md":
+            (folder / "declaration").symlink_to(outside, target_is_directory=True)
 
 
 def test_the_stand_in_reduces_each_record_as_the_service_does() -> None:

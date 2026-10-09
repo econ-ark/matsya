@@ -1,7 +1,9 @@
 """Read the user's Matsya token and explicitly supplied service address.
 
 Environment variables override the user's saved configuration. The client
-has no default service address.
+has no default service address. `token_file` answers whether a Matsya token
+is saved, without the Matsya token, and `first_use` whether the client is
+used for the first time on this machine (AMD-MAT-015 §2).
 """
 
 from __future__ import annotations
@@ -49,7 +51,7 @@ def _server_url(value: str) -> str:
     if not server:
         raise ConfigurationError(
             "No Matsya service address configured. Set MATSYA_SERVER to the "
-            "address supplied by AAS, or run matsya configure."
+            "address supplied by Econ-ARK-admin, or run matsya configure."
         )
     parsed = urlsplit(server)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
@@ -86,3 +88,22 @@ def save_config(token: str, server: str | None = None) -> Path:
         os.fchmod(stream.fileno(), 0o600)
         stream.write(contents)
     return CONFIG_FILE
+
+
+def token_file() -> Path | None:
+    """The configuration file, when it holds a Matsya token; None when the
+    file does not exist, cannot be read or holds no Matsya token. The Matsya
+    token itself is not returned."""
+    if not CONFIG_FILE.exists():
+        return None
+    try:
+        token = _read_toml(CONFIG_FILE).get("token", "")
+    except (OSError, ValueError):
+        return None
+    return CONFIG_FILE if str(token).strip() else None
+
+
+def first_use() -> bool:
+    """Whether this is the first use of the client on this machine: no
+    configuration file exists and MATSYA_TOKEN is unset."""
+    return not CONFIG_FILE.exists() and not os.environ.get("MATSYA_TOKEN")

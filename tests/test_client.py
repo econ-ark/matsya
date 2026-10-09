@@ -5,8 +5,10 @@ and the cancellation of AMD-MAT-008 §4, the first two headings of the
 report with which `job wait` prints an ended job (AMD-MAT-010 §5), the
 answer `--json` prints, and the refusals 401, 404, 409 and 422, printed
 with the service's message, with a nonzero exit status and without the
-Matsya token. The model folder, the report and `ask --follow` are tested in
-`test_amd_mat_010_client.py` and `test_amd_mat_009_client.py`."""
+Matsya token; a redirect to another host, refused before the Matsya token
+is sent there, and a redirect to the same host, followed. The model folder,
+the report and `ask --follow` are tested in `test_amd_mat_010_client.py`
+and `test_amd_mat_009_client.py`."""
 
 from __future__ import annotations
 
@@ -14,6 +16,8 @@ import base64
 import io
 import json
 import re
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
@@ -472,6 +476,58 @@ def test_no_api_token_is_sent(stand_in, run, monkeypatch) -> None:
     assert headers["Authorization"] == f"Bearer {stand_in.token}"
     assert "x-anthropic-key" not in {name.lower() for name in headers}
     assert not any("sk-ant" in value for value in headers.values())
+
+
+class _Redirecting(BaseHTTPRequestHandler):
+    """A server that answers `GET /v1/index` with 302 and the address
+    `server.location`, and any other GET with 200 and its path in JSON; it
+    keeps each request's path and `Authorization` header in `server.seen`."""
+
+    def log_message(self, format: str, *args: object) -> None:
+        """The tests print no request log."""
+
+    def do_GET(self) -> None:
+        self.server.seen.append((self.path, self.headers.get("Authorization")))
+        data = b"" if self.path == "/v1/index" else json.dumps({"path": self.path}).encode()
+        self.send_response(302 if self.path == "/v1/index" else 200)
+        if self.path == "/v1/index":
+            self.send_header("Location", self.server.location)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+
+def test_a_redirect_to_another_host_is_refused_and_one_to_the_same_host_followed(stand_in) -> None:
+    """A redirect to another host, the stand-in at another port of the
+    loopback address, raises `MatsyaError` naming the two, and no request
+    reaches the stand-in, so the Matsya token is not sent there; a redirect
+    to the same scheme, host and port is followed with the Matsya token."""
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Redirecting)
+    server.seen = []
+    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True)
+    thread.start()
+    here = f"http://127.0.0.1:{server.server_address[1]}"
+    bearer = f"Bearer {stand_in.token}"
+    try:
+        client = MatsyaClient(stand_in.token, here)
+        server.location = f"{stand_in.url}/v1/index"
+        with pytest.raises(MatsyaError) as refused:
+            client.index()
+        assert str(refused.value) == (
+            f"The Matsya service at {here} redirected the request to {stand_in.url}; the client "
+            "follows a redirect only to the same scheme, host and port, so that the Matsya token "
+            "is sent nowhere else."
+        )
+        assert stand_in.requests == [] and server.seen == [("/v1/index", bearer)]
+
+        server.location = "/v1/moved"
+        assert client.index() == {"path": "/v1/moved"}
+        assert server.seen[1:] == [("/v1/index", bearer), ("/v1/moved", bearer)]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(5)
 
 
 def _session_with_text(run, tmp_path, name: str, text: str) -> str:

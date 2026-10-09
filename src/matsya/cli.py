@@ -1,6 +1,9 @@
 """The command `matsya`, which calls the routes of the Matsya service of
-spec 0.3 from a terminal:
+spec 0.3 from a terminal and prints the user guide installed with it:
 
+    matsya
+    matsya docs [<page> | --all] [--online]
+    matsya docs --path
     matsya configure
     matsya index
     matsya search "<query>" [--collections NAMES] [--limit N]
@@ -31,22 +34,35 @@ printed with the first two headings of its report, the label with the
 identifiers and the status sentence; `job files` writes its model folder and
 report (AMD-MAT-010 §§4 and 5), and `ask --follow` waits for the job a turn
 started and writes its folder (AMD-MAT-009 §5). Every command but
-`configure` takes `--json`, which prints the service's JSON answer as it
-arrived, for `job submit` the job's and for `ask` the turn's; otherwise the
-command prints plain text for a person. A refusal of the service is printed
-with the service's own message, and the command exits with status 1. No
-output shows the Matsya token.
+`configure` and `docs` takes `--json`, which prints the service's JSON
+answer as it arrived, for `job submit` the job's and for `ask` the turn's;
+otherwise the command prints plain text for a person. A refusal of the
+service is printed with the service's own message, and the command exits
+with status 1. No output shows the Matsya token.
+
+`matsya` alone prints an orientation in Markdown: what Matsya is, where the
+user guide is installed, the version of the client it describes, the
+commands that print it and the one that upgrades the client, and whether a
+Matsya token is saved; `docs` lists the guide's pages and prints them as
+they are installed or, with `--online`, as the client's public repository
+holds them today (AMD-MAT-015 §2). A command run at the first use of the
+client on a machine, with no configuration file and MATSYA_TOKEN unset,
+first prints two lines that send a model working for the user to the guide;
+`matsya` alone, `docs` and `--help` need no Matsya token and do not print
+them.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import textwrap
 import time
 from pathlib import Path
 from typing import Any, Callable
 
+from matsya import __version__, guide
 from matsya.client import (
     JOB_FINAL_STATES,
     MatsyaClient,
@@ -56,7 +72,7 @@ from matsya.client import (
     is_pdf,
     last_cycle_files,
 )
-from matsya.config import ConfigurationError, load_config, save_config
+from matsya.config import ConfigurationError, first_use, load_config, save_config, token_file
 
 # the roles that compute each step of a job or a turn, and at reconstruction
 # the program of the round-trip comparison (spec 0.3 §4, REQ-MAT-017;
@@ -81,8 +97,32 @@ CANCEL_REQUESTED = (
     "Its cancellation was requested: the job stops before its next call to the "
     "language-model provider, and a call already sent finishes and is charged."
 )
+# what Matsya is and its three parts, in the words of the summary of the user
+# guide's page `index.md`, which the orientation prints (AMD-MAT-015 §2)
+ABOUT = (
+    "Matsya turns an economist's description of a dynamic model, or a paper, into a "
+    "declaration in Bellman-SYM, Project Bellman's language for staged Bellman problems, "
+    "checks the declaration, and answers questions about models and about the language. "
+    "It has three parts: **matsya-client**, the command you run on your own machine, a "
+    "program with no language model in it; **matsya-architect**, the service's job side, "
+    "which builds and checks a declaration in one run; and **matsya-master**, the "
+    "service's conversation side, which answers one question at a time."
+)
+# the command that upgrades the client and the guide installed with it, which
+# the orientation prints (AMD-MAT-015 §2)
+UPGRADE = "pip install --upgrade git+https://github.com/econ-ark/matsya"
+# the two lines a command prints first at the first use of the client on a
+# machine (AMD-MAT-015 §2)
+FIRST_USE = (
+    "This is the first use of matsya on this machine.\n"
+    "A model working for the user reads the guide first: matsya docs --all"
+)
 
 EPILOG = """\
+Read first:
+  matsya                             what Matsya is and where its user guide is installed
+  matsya docs --all                  the user guide, every page in Markdown
+
 Set up once:
   matsya configure                   save your Matsya token and the service address
   export MATSYA_SERVER=...           override the saved service address
@@ -624,6 +664,88 @@ def _ask(client: MatsyaClient, args: argparse.Namespace) -> list[str]:
     return lines
 
 
+# -- the user guide and the orientation
+
+
+def _orientation_lines() -> list[str]:
+    """What `matsya` alone prints, in Markdown (AMD-MAT-015 §2): what Matsya
+    is and its three parts, in the words of the user guide's page
+    `index.md`; the folder where the guide is installed, the version of the
+    client whose commands it describes, the commands that print it as
+    installed and as the client's public repository holds it today, and the
+    command that upgrades the client; whether a Matsya token is saved on
+    this machine, never the Matsya token itself; and the command that lists
+    the commands."""
+    saved = token_file()
+    if saved is None:
+        token = "No Matsya token is saved on this machine; `matsya configure` saves it."
+    else:
+        token = f"A Matsya token is saved on this machine, in `{saved}`."
+    if os.environ.get("MATSYA_TOKEN"):
+        token += (
+            " The environment variable `MATSYA_TOKEN` is set, and the commands use its value "
+            "in place of a saved Matsya token."
+        )
+    return [
+        "# Matsya",
+        "",
+        ABOUT,
+        "",
+        f"The user guide is installed on this machine in the folder `{guide.folder()}`. "
+        f"The installed guide describes the commands of this client, version {__version__}. "
+        "`matsya docs` lists its pages, `matsya docs --all` prints the whole installed guide, "
+        "which a model working for the user reads first, and `matsya docs --all --online` "
+        "prints the whole guide as it stands today in the client's public repository. "
+        f"`{UPGRADE}` upgrades the client and its installed guide.",
+        "",
+        token,
+        "",
+        "`matsya --help` lists the commands.",
+    ]
+
+
+def _page_argument(value: str) -> str:
+    """The name of the page of the user guide that `value` names, with or
+    without `.md`; any other value is refused, with the names of the pages,
+    and the command exits with status 2."""
+    name = guide.page_name(value)
+    if name is None:
+        raise argparse.ArgumentTypeError(
+            f'no page of the user guide is named "{value}"; the pages are '
+            + ", ".join(guide.names())
+        )
+    return name
+
+
+def _docs_lines(args: argparse.Namespace) -> list[str]:
+    """What `matsya docs` prints (AMD-MAT-015 §2): with `--path`, the folder
+    that holds the pages; with `--all`, every page in order, each after a
+    line naming its file; one page by its name; or, with no page named, one
+    line for each page, its name and its title. A page is printed in
+    Markdown as its file holds it, without its front matter. With
+    `--online`, a page printed is read as the client's public repository
+    holds it today; the list of pages, and the titles, are the installed
+    guide's, and the list sends no request. Every page is read before
+    anything is printed, so that a page that cannot be read leaves no part
+    of the guide printed."""
+    if args.path:
+        return [str(guide.folder())]
+    text = guide.online_text if args.online else guide.text
+    if args.all:
+        lines: list[str] = []
+        for name in guide.names():
+            lines += ([""] if lines else []) + [
+                f"<!-- page: {guide.file_name(name)} -->",
+                text(name),
+            ]
+        return lines
+    if args.page is not None:
+        return [text(args.page)]
+    names = guide.names()
+    width = max((len(name) for name in names), default=0)
+    return [f"{name:<{width}}  {guide.title(name)}" for name in names]
+
+
 # -- configure
 
 
@@ -641,7 +763,7 @@ def _run_configure() -> None:
         )
         sys.exit(1)
 
-    server = input("Enter the service address supplied by AAS: ").strip()
+    server = input("Enter the service address supplied by Econ-ARK-admin: ").strip()
     try:
         path = save_config(token, server or None)
     except ConfigurationError as exc:
@@ -691,6 +813,45 @@ def _build_parser() -> argparse.ArgumentParser:
     shared = argparse.ArgumentParser(add_help=False)
     shared.add_argument(
         "--json", action="store_true", help="print the service's JSON answer as it arrived"
+    )
+
+    docs = commands.add_parser(
+        "docs",
+        help=(
+            "print the user guide in Markdown, installed with the client or, with --online, "
+            "read from its public repository"
+        ),
+        description=(
+            "Print the Matsya user guide, installed with the client, in Markdown: the list of "
+            "its pages, one page, every page with --all, or with --path the folder that "
+            "holds them. With --online, the page or every page is read as the client's "
+            "public repository holds it today, over HTTPS."
+        ),
+    )
+    # the subparser's own refusal, for --online with --path, which the
+    # mutually exclusive group below cannot express
+    docs.set_defaults(docs_parser=docs)
+    shown = docs.add_mutually_exclusive_group()
+    shown.add_argument(
+        "page",
+        nargs="?",
+        type=_page_argument,
+        help="the page to print, named with or without .md, such as index",
+    )
+    shown.add_argument(
+        "--all", action="store_true", help="print every page in order, each after a line naming it"
+    )
+    shown.add_argument(
+        "--path", action="store_true", help="print the folder where the pages are installed"
+    )
+    docs.add_argument(
+        "--online",
+        action="store_true",
+        help=(
+            "read the page, or with --all every page, as the client's public repository on "
+            "GitHub holds it today, in place of the installed copy; the list of pages stays "
+            "the installed one"
+        ),
     )
 
     commands.add_parser("configure", help="save your Matsya token and the service address")
@@ -942,12 +1103,31 @@ def _stopped(args: argparse.Namespace) -> str:
 def main(argv: list[str] | None = None) -> int:
     """Run the command that `argv`, or the command line, names, and return
     its exit status: 0 when it was carried out, 1 when the service refused
-    the request or the client could not send it."""
+    the request or the client could not send it, or `docs --online` could
+    not read a page. With no command, print the orientation. At the first
+    use of the client on this machine, a command other than `docs` first
+    prints the two lines of `FIRST_USE`."""
     parser = _build_parser()
     args = parser.parse_args(argv)
     if args.command is None:
-        parser.print_help()
+        print("\n".join(_orientation_lines()))
         return 0
+    if args.command == "docs":
+        if args.online and args.path:
+            args.docs_parser.error("argument --online: not allowed with argument --path")
+        try:
+            lines = _docs_lines(args)
+        except guide.OnlineError as error:
+            print(
+                f"Error: {error}; without --online, matsya docs prints the installed guide.",
+                file=sys.stderr,
+            )
+            return 1
+        print("\n".join(lines))
+        return 0
+    if first_use():
+        # flushed, so that the two lines precede a refusal on standard error
+        print(FIRST_USE, flush=True)
     if args.command == "configure":
         _run_configure()
         return 0

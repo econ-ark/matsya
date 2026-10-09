@@ -30,7 +30,7 @@ from matsya.client import (
 )
 from matsya.config import ConfigurationError, load_config
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 __all__ = [
     "AuthenticationError",

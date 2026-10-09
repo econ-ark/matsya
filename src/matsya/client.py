@@ -149,6 +149,38 @@ class ContextTooLargeError(MatsyaError):
     over 16 MiB."""
 
 
+def _origin(url: str) -> str:
+    """The scheme and the host, with its port, of an address, in lower case,
+    such as `https://matsya.example.org:8443`."""
+    parts = urllib.parse.urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc.rpartition('@')[2]}".lower()
+
+
+class _SameHostRedirects(urllib.request.HTTPRedirectHandler):
+    """urllib's handler of redirects, which copies a request's headers, the
+    `Authorization` header among them, to the redirected request; a request
+    that carries the Matsya token is redirected only to its own scheme, host
+    and port, and a redirect elsewhere raises `MatsyaError` before any
+    request is sent there. `hidden` replaces the Matsya token in the
+    message."""
+
+    def __init__(self, hidden: Callable[[str], str]) -> None:
+        self.hidden = hidden
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        here, there = _origin(req.full_url), _origin(newurl)
+        if req.has_header("Authorization") and there != here:
+            fp.close()
+            raise MatsyaError(
+                self.hidden(
+                    f"The Matsya service at {here} redirected the request to {there}; the "
+                    "client follows a redirect only to the same scheme, host and port, so that "
+                    "the Matsya token is sent nowhere else."
+                )
+            )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def _segment(value: str) -> str:
     """One path segment of a route, such as a job's identifier."""
     return urllib.parse.quote(str(value), safe="")
@@ -778,9 +810,23 @@ def check_folder(folder: str | Path, overwrite: bool = False) -> None:
 
 def _check_targets(folder: Path, paths: list[str]) -> None:
     """Refuse, before anything is written into an existing folder, a path
-    that is a folder there or that passes through a file there."""
+    that is a folder there or that passes through a file there, and a path
+    that is, or passes through, a symbolic link within the folder, whose
+    target may lie outside it; every path written resolves within the
+    folder."""
+    inside = folder.resolve()
     for relative in paths:
         target = folder / relative
+        parts = Path(relative).parts
+        for end in range(1, len(parts) + 1):
+            component = folder.joinpath(*parts[:end])
+            if component.is_symlink():
+                raise FileExistsError(
+                    f"{component} is a symbolic link; the model folder writes no file through a "
+                    f"symbolic link, whose target may lie outside {folder}."
+                )
+        if not target.resolve().is_relative_to(inside):
+            raise FileExistsError(f"{target} resolves outside {folder}; nothing is written there.")
         if target.is_dir():
             raise FileExistsError(f"{target} is a folder; the model folder writes a file there.")
         for parent in list(target.parents)[: len(Path(relative).parts) - 1]:
@@ -812,6 +858,7 @@ class MatsyaClient:
         self.token = token
         self.server_url = server_url.rstrip("/")
         self.last_text = ""
+        self._opener = urllib.request.build_opener(_SameHostRedirects(self._hidden))
 
     def __repr__(self) -> str:
         return f"MatsyaClient(server_url={self.server_url!r})"
@@ -824,7 +871,9 @@ class MatsyaClient:
 
     def _request(self, method: str, path: str, body: dict[str, Any] | None = None) -> Any:
         """Send one request to the route `path` and return the service's
-        JSON answer; a refusal raises `MatsyaError` or one of its subclasses."""
+        JSON answer; a refusal raises `MatsyaError` or one of its subclasses,
+        as does a redirect to another scheme, host or port
+        (`_SameHostRedirects`)."""
         # imported here, since the package's __init__ imports this module first
         from matsya import __version__
 
@@ -839,7 +888,7 @@ class MatsyaClient:
             self.server_url + path, data=data, headers=headers, method=method
         )
         try:
-            with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as answer:
+            with self._opener.open(request, timeout=REQUEST_TIMEOUT) as answer:
                 text = answer.read().decode("utf-8")
         except urllib.error.HTTPError as error:
             raise self._refusal(error) from None
@@ -1097,7 +1146,10 @@ class MatsyaClient:
         name with a folder part other than `calibration/<file>`,
         `settings/<file>` or `stages/<key>/methods.yml`, or a name beginning
         with a dot), or two files at one path raise `MatsyaError` before
-        anything is written.
+        anything is written. A path within the folder that is, or passes
+        through, a symbolic link is refused with `FileExistsError` before
+        anything is written, since the link's target may lie outside the
+        folder.
         """
         folder = Path(folder)
         check_folder(folder, overwrite)

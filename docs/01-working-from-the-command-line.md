@@ -8,7 +8,7 @@ topic: [matsya]
 # Working with Matsya from the command line
 
 > [!summary]
-> This page follows one piece of work through the command `matsya`, from installation to the folder of stage files, with the commands as you type them and what each prints. The command is matsya-client of [Matsya in three parts](index.md): a program that sends your requests to the service and writes what comes back. Every command but `configure` takes `--json`, which prints the service's answer unchanged, and `matsya <command> --help` lists a command's options.
+> This page follows one piece of work through the command `matsya`, from installation to the folder of stage files, with the commands as you type them and what each prints. The command is matsya-client of [Matsya in three parts](index.md): a program that sends your requests to the service and writes what comes back. Every command but `configure` and `docs` takes `--json`, which prints the service's answer unchanged, and `matsya <command> --help` lists a command's options.
 
 > [!info]- Relationship with other documents
 > **Builds on** — [Matsya in three parts](index.md), which defines the three parts and the words session, job and turn.
@@ -24,7 +24,7 @@ pip install git+https://github.com/econ-ark/matsya
 matsya configure
 ```
 
-The command asks for the Matsya token and the address, saves both in a private file in your home folder, and sends nothing. The environment variables `MATSYA_TOKEN` and `MATSYA_SERVER` override the saved values, which is how a script or a second machine uses the command. Then check the connection:
+The command asks for the Matsya token and the address, saves both in a private file in your home folder, and sends nothing. At the first use of `matsya` on a machine, with no configuration file saved and `MATSYA_TOKEN` unset, the command first prints two lines that send a model working for you to this guide, `matsya docs --all`. The environment variables `MATSYA_TOKEN` and `MATSYA_SERVER` override the saved values, which is how a script or a second machine uses the command. Then check the connection:
 
 ```
 matsya index
@@ -46,24 +46,24 @@ The command creates a session named `model`, after the file, appends the file's 
 matsya job wait <job>
 ```
 
-The command polls the job and prints a line whenever its step or cycle changes, naming the step and the role that computes it, for instance the Model-prose-writer, Prose-to-Bellman-Sym, the elaborator's check, Semantics-to-Prose, or the judges. When the job ends it prints the final state and its reason: `converged`; `not_converged`, with the reason, such as the cycle limit reached; `needs_input`, with the numbered questions and the sentence that they stand in the session; or `failed`, with its code. `matsya job status <job>` prints the same without waiting.
+The command polls the job and prints a line whenever its step or cycle changes, naming the step and the role that computes it: `preparation` (the Model-prose-writer and the prose-source-judge), `writing` (Prose-to-Bellman-Sym, whose files the elaborator checks within the step), `prose_writing` (Semantics-to-Prose), `judging` (the prose-roundtrip-judge) and `reconstruction` (Prose-to-Bellman-Sym and the round-trip comparison). When the job ends it prints the final state and its reason: `converged`; `not_converged`, with the reason, such as the cycle limit reached; `needs_input`, with the numbered questions and a sentence that says whether they stand in the session; or `failed`, with its code. `matsya job status <job>` prints the same without waiting.
 
 ```
 matsya job files <job> proposed-model
 ```
 
-The command writes the job's products into the folder, which must be new or empty: the stage files under `declaration/stages/<key>/<key>.bl`, the writer's note beside a single stage as `<key>.md`, the model prose as `economics.md`, the report as `report.md`, and the record the service returned as `record.json`. The report states the job's label, its final state and reason, the cycles run, what each judge found not to match with the quoted sentences, whether the round-trip files equal the written ones, the questions, and the language-model text charged; every sentence of it is the record's content or a fixed sentence. `--all-iterates` adds, for training, a folder `iterates/` with every cycle's files, prose and verdicts and the full record.
+The command writes the job's products into the folder, which must be new or empty: the stage files under `declaration/stages/<key>/<key>.bl`, the writer's note, when it leaves something open, beside a single stage as `<key>.md` and otherwise as `declaration/notes.md`, any period, trellis, calibration, settings or methods file under `declaration/` by its name, the model prose as `economics.md`, the report as `report.md`, and the record the service returned as `record.json`. The report states the job's label, its final state and reason, the cycles run, what each judge found not to match with the quoted sentences, whether the round-trip files equal the written ones, the questions, and the language-model text charged; every sentence of it is the record's content or a fixed sentence. `--all-iterates` adds, for training, a folder `iterates/` with every cycle's files, prose and verdicts and the full record.
 
 ## 3 Replying to a job's questions
 
-A job that ends `needs_input` has written its questions into the session as entries. Read them and reply:
+A job that ends `needs_input` has written its questions into the session as entries, provided you added no entry to the session while it ran; otherwise they stand in its record alone, where `matsya job status` prints them, and you submit again. Read them and reply:
 
 ```
 matsya session show <session>
 matsya session add <session> reply.md --replies-to <entry number>
 ```
 
-The reply is an entry of the session, and because it answers a question of the session's latest job, it starts the next job at once, with the text as it now stands. Follow it with `matsya job wait`. A reply to a job that is no longer the latest one, because you changed the text while it ran, is kept in the session but starts nothing; submit again instead.
+The reply is an entry of the session, and because it answers a question of the session's latest job, it starts the next job at once, with the text as it now stands. Follow it with `matsya job wait`. A reply is kept in the session but starts nothing when a later job of the session has started since the question was asked, or when an earlier reply to the same job's questions has already started its next attempt; submit again instead, with `matsya job submit --session <session>`.
 
 ## 4 Asking questions in a session
 
@@ -71,9 +71,9 @@ The reply is an entry of the session, and because it answers a question of the s
 matsya ask <session> "Which equation characterizes the optimal consumption choice in this model?"
 ```
 
-matsya-master answers from the retrieval index, the session's text and the outputs of the session's jobs. The command waits for the turn and prints the answer, then the citations, each with the page, the heading and the quoted sentence, and, when the answer read a job's outputs, the label of the job it used. Questions that end in a request for more information from you are printed as such. `--stage-file <path>` attaches a stage file of your own to the question; the service elaborates it and the answer reads its dossier.
+matsya-master answers from the retrieval index, the session's text and the outputs of the session's jobs. The command waits for the turn and prints, when the answer read a job's outputs, the line `Answer from` with the label and identifier of the job it used; then the answer; then the citations, each with the passage's path or the output's address, the heading, the page where the index records one, and the quoted sentence. Questions that end in a request for more information from you are printed as such. `--stage-file <path>` attaches a stage file of your own to the question; the service elaborates it and the answer reads its dossier.
 
-A session may hold nothing but questions and answers, created with `matsya session new "a name"` and fed with `matsya session add <session> notes.md`; and a question may be asked in the session a job created, in which case the answer reads that job's outputs.
+A session may hold nothing but questions and answers, created with `matsya session new "a name"` and fed with `matsya session add <session> notes.md`; and a question may be asked in the session `matsya job submit` created, in which case, once the job has ended with a record, the answer reads that job's outputs.
 
 ## 5 Asking matsya-master to submit a job
 
@@ -93,14 +93,14 @@ Each submission from a session is a new job with the next number, and the sessio
 matsya session show <session>
 ```
 
-By default matsya-master discusses the session's latest job that read the current version of the text. To discuss an earlier one, select it; to stop a queued or running job, cancel it:
+When no job is selected, matsya-master discusses the session's latest job that holds a record and during whose run you added no entry to the session; the questions you ask after it ended do not change which job that is, and a cancelled job is never chosen this way. To discuss another job of the session that holds a record, select it; to stop a queued or running job, cancel it:
 
 ```
 matsya session select <session> <job>
 matsya job cancel <job>
 ```
 
-A cancelled job keeps its record and the usage of the calls it had made; a provider request already sent completes before it stops, and the interface promises nothing else. Cancelling a job that has already ended is refused with the sentence that the job has ended.
+A job cancelled while it runs keeps its record and the usage of the calls it had made; a provider request already sent completes before it stops, and the interface promises nothing else. A job cancelled while queued never runs and holds no record. Cancelling a job that has already ended is refused with the sentence that the job has ended.
 
 ## 7 A paper
 
@@ -108,12 +108,13 @@ A cancelled job keeps its record and the usage of the calls it had made; a provi
 matsya job submit paper.pdf
 ```
 
-A PDF is submitted as the job's source with no session, since a paper cannot yet be attached to a session, so its questions stand in its record only, where `matsya job status` prints them. The paper's text is sent to the language-model provider; ask the service's administrator before submitting a paper that may not leave your machine.
+A PDF is submitted as the job's source with no session, since a PDF cannot yet be attached to a session, so its questions stand in its record only, where `matsya job status` prints them. The paper's text is sent to the language-model provider; ask the service's administrator before submitting a paper that may not leave your machine.
 
 ## 8 The commands
 
 | Command | What it does |
 |---|---|
+| `matsya`, `matsya docs [<page>] [--online]`, `matsya docs --all [--online]`, `matsya docs --path` | what Matsya is, where its guide is installed and whether a Matsya token is saved; this guide's pages in Markdown, as installed with the client or, with `--online`, as its public repository holds them today |
 | `matsya configure` | saves your Matsya token and the service's address |
 | `matsya index` | the index the service reads, the embedding model and the configuration's version |
 | `matsya search "<query>" [--collections …] [--limit n]` | the passages of the index that match a query |

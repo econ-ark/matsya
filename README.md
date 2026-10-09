@@ -73,7 +73,7 @@ Claude Code runs `matsya`, which points it to the guide; it reads the guide with
 Build the model described in economics.md.
 ```
 
-Claude Code runs `matsya job submit economics.md`, follows the job to its end, and then runs `matsya job files <job> <new folder>`, which writes the proposed stage files, the model prose and `report.md` into a folder of yours; it reports the job's final state (a finished job is not necessarily a converged one) and shows you the report and the stage files to compare with the model you intended.
+Claude Code runs `matsya job submit economics.md`, follows the job to its end, and then runs `matsya job files <job> <new folder>`, which writes the proposed stage files, the model prose and `report.md` into a folder of yours; it reports the job's final state (a finished job is not necessarily a converged one) and shows you the report and, when the job reached the writing step, the stage files to compare with the model you intended; a job that stopped earlier to ask for input leaves `report.md` and the record and no stage file.
 
 Two things can then happen. If the job ended with questions, because the description left something necessary unsaid, the questions stand in the session; you answer them and the next job starts from your answer:
 
@@ -99,4 +99,4 @@ Every command is also meant to be typed by hand. `matsya --help` lists them, and
 
 ## Source and license
 
-The client is developed in the folder `AI/matsya-acess/client/` of the Bellman project's repository and published here; its version is the one in `pyproject.toml`, tagged at each release. This repository first held an earlier client of the previous Matsya service, whose last commit was `6b1bf86`, under the Apache 2.0 license retained in [LICENSE](LICENSE); the present code calls the current Matsya service's `/v1/` routes and no other service.
+The client is developed in the Bellman project's repository and published here; its version is the one in `pyproject.toml`, tagged at each release. This repository first held an earlier client of the previous Matsya service, whose last commit was `6b1bf86`, under the Apache 2.0 license retained in [LICENSE](LICENSE); the present code calls the current Matsya service's `/v1/` routes and no other service.

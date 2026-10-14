@@ -1,5 +1,7 @@
 # Matsya client
 
+The current Project Bellman client is in [`bellman-matsya-client/`](bellman-matsya-client/README.md). Install it with `python -m pip install 'git+https://github.com/econ-ark/matsya.git#subdirectory=bellman-matsya-client'` and use the `bellman-matsya` command. The root package described below is an earlier Bellman client that installs the separate `matsya` command.
+
 Matsya is a service of Project Bellman. It reads an economist's description of a dynamic model, or a paper, writes the model in Bellman-SYM, the project's language for staged Bellman problems, checks what it wrote, and answers questions about models and about the language. It holds an index of the project's documentation and of the research literature on dynamic programming, and saved instructions that direct how it writes a model and answers a question, so that it can help an economist develop a dynamic model.
 
 This package installs the command `matsya`, through which you, or the coding assistant working for you, reach the service. The command runs on your computer. On the server, **matsya-architect** runs a **job**, one attempt to write and check the stage files of a model from its description; **matsya-master** answers questions in a **session**, the saved description, questions and replies of one model. Install and configure the command once, in steps 1 and 2. Then either let your assistant use it, step 3, or run the commands yourself, step 4.

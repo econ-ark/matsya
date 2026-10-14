@@ -1,0 +1,71 @@
+---
+title: For an assistant using Matsya
+audience: user
+type: user-guide
+topic: [matsya]
+---
+
+# For an assistant using Matsya
+
+> [!summary]
+> This page is for an assistant, such as Claude Code, that runs `bellman-matsya` on your machine for you ([Matsya in three parts](index.md) §1). The assistant's program runs locally; the language model it calls may run elsewhere. This is the first page the assistant reads. It names Matsya's three parts; lists the files the client keeps on your machine, with the sessions and jobs kept on the service; gives the commands of a project folder in order; and states the form of their answers and refusals. Each section names the page that explains its subject in full, and [The command reference](05-the-command-reference.md) gives the exact form of every command.
+
+> [!info]- Relationship with other documents
+> **Continued by** — [Matsya in three parts](index.md) and [The roles and the work of a job](01-the-roles-and-the-work-of-a-job.md), which define the words this page uses; then the pages of the four groups, in the order in which the entry page [Matsya](../index.md) maps them.
+> **See also** — [The command reference](05-the-command-reference.md), every command with its options, printed lines, exit statuses and JSON fields; [Working on a project folder](03-working-on-a-project-folder.md), the work of §4 followed through one project with what each command prints.
+> **Explained for developers in** — the [Matsya developer guide](../dev-guide/index.md), which says what each role of the service is given and what it returns.
+
+## 1 What Matsya is
+
+Matsya is a service of Project Bellman. From an economist's description of a dynamic model, written in prose and displayed equations, or from the text of a paper, it writes the model's declaration in [Bellman-SYM](../../wiki/sym.md), the project's language for staged Bellman problems, checks the declaration, and reports where the declaration and the source disagree; when the source leaves something necessary unsaid, it ends its work with a question for the user. It also answers questions about a model, about its declaration, about the language and about the literature on dynamic programming, and every answer quotes and cites the passages it rests on. The user owns the model and its description: Matsya proposes files, and the user decides whether to keep them.
+
+## 2 The three parts
+
+Matsya has three parts, which [Matsya in three parts](index.md) §1 defines:
+
+- matsya-client is the command `bellman-matsya` and its Python module, installed on the user's machine from the package `bellman-matsya-client`. It holds no language model; it sends the user's requests to the service with the user's Matsya token and prints or writes what the service answers. It is the part you run.
+- matsya-architect runs jobs on the server. A job is one attempt to write and check the files of a model at a target, from the text of a session or from a file; it takes minutes, it is charged by its language-model tokens, and it asks nothing while it runs. A question it cannot settle ends the job, and the user's reply to the question starts the next job.
+- matsya-master answers one question at a time in a session, the kept and numbered text of one model, in a turn that takes about a minute and costs far less than a job. It writes no stage file; when the user asks it to build, it starts a job from the session.
+
+The words session, job, turn, version, label and target are defined in [Matsya in three parts](index.md) §2, and the roles that do the work of a job in [The roles and the work of a job](01-the-roles-and-the-work-of-a-job.md) §1. That page's §3 says which command answers which kind of request, and the two rules an assistant follows: start a job only when the user asks for a build, and answer a job's questions in the session.
+
+## 3 Where the client keeps its files
+
+The client keeps three kinds of file on the user's machine.
+
+1. The configuration file `~/.config/bellman-matsya/config.toml`, in the user's home folder, which `bellman-matsya configure` writes as a private file. It holds the user's Matsya token and may hold a custom service address. The client otherwise uses the built-in address `http://45.55.225.169:8710`. The environment variables `BELLMAN_MATSYA_TOKEN` and `BELLMAN_MATSYA_SERVER`, when set, override the saved token and service address. `bellman-matsya` alone says whether a Matsya token is saved, and no command prints the Matsya token. When none is saved, the user runs `bellman-matsya configure`, which asks only for the Matsya token; [Working with Matsya from the command line](02-working-from-the-command-line.md) §1 describes the installation and the set-up.
+2. In a project folder (§4), the folder `.bellman-matsya/`, which `bellman-matsya project init` writes. `.bellman-matsya/project.json` holds the identifier of the folder's session, the service's address and the digest of `economics.md` as the session last received it, a code computed from the file's bytes by which `bellman-matsya project submit` tells whether the file has changed. `.bellman-matsya/README.md` is a short note for a model that opens the folder: that the folder is a Matsya project, its session's identifier and the service's address, the files the client keeps and writes there, and the commands used most. A later `bellman-matsya project pull --replace` can write an open writer's note to `.bellman-matsya/writer-note.md`. Beside `.bellman-matsya/`, `bellman-matsya project init` creates the folder's `AGENTS.md`, with a paragraph that names the note and `bellman-matsya docs`, when the folder has none; when the folder has one, the command prints the paragraph for the user to add.
+3. The outputs of jobs: the files `bellman-matsya project pull` writes into the project folder or into a sub-folder of it, and the model folders `bellman-matsya job files` writes into a folder the user names.
+
+Everything else is kept on the server: the sessions with their entries, the jobs with their labels and records, the questions of the jobs and the user's replies, and the turns with their answers. The client keeps no copy of them and reads them from the server each time they are asked for, with `bellman-matsya project status` in a project folder or `bellman-matsya session show <session>` anywhere; in a project folder, `bellman-matsya` alone also prints the folder's session, the label of its latest job and any question awaiting a reply. The pages of this guide are installed with the client, in the folder that `bellman-matsya docs --path` prints.
+
+## 4 The work of a project folder
+
+A **project folder** is a folder that holds one model in the layout of the project's applications and remembers the identifier of the model's session: `economics.md`, the user's description of the model, which is the source of the folder's jobs and which the client never writes; `declaration/`, the model's stage files and its period, trellis, recipe, methods, calibration and settings files as they stand, possibly none; and `.bellman-matsya/` (§3). The folder's target is read from `declaration/`: `recipe` when a methods, calibration, settings or recipe file is present, otherwise `trellis` when `trellis.yml` is present, otherwise `period` when a period file is present, and otherwise `stage`. A piece of work on the folder uses these commands, in this order, each run in the folder.
+
+1. `bellman-matsya project init`, once. It creates the folder's session, named after the folder; appends `economics.md` to the session as its first entry when the folder holds one with text; writes `.bellman-matsya/project.json` and `.bellman-matsya/README.md`; and creates `AGENTS.md`, or prints its paragraph, as §3 says. It refuses a folder that is already a project. `bellman-matsya project init <folder>` does the same for another folder, which it creates when it does not exist.
+2. `bellman-matsya project submit`, when the user asks for a build. When `economics.md` has changed since the session last received it, it appends the file to the session as a new entry. It sends, as the job's starting declaration, the files of `declaration/` that a declaration holds: the stage files and the period, trellis, recipe, methods, calibration and settings files, which the job's first cycle checks in place of its first writing; the notes beside the stage files, and any other file, are left out, and the command names them. It then submits a job from the folder's session at the folder's target, and prints what it sent, the target, the job's label and the command `bellman-matsya job wait <job>`, which prints the job's steps until the job ends. `--target` names another target, and `--max-cycles n` limits the cycles of writing and checking.
+3. `bellman-matsya project status`, to see where the work stands. It prints the folder's session: its identifier, its entries, its jobs with their labels, the selected job, the questions awaiting a reply, and the two commands, written with the session's identifier, that answer a question and that ask one; and it says whether `economics.md` has changed since the session last received it.
+4. `bellman-matsya project pull`, to write the files of a job. It writes the products of the latest ended job of the folder's session that holds a record, or of the job that `bellman-matsya project pull <job>` names. Without an option, it writes the full model folder into the sub-folder `bellman-matsya-output/job-<number>/`, or into the sub-folder that `--into <subfolder>` names, which must be new or empty, and leaves the folder's declaration untouched. With `--replace`, it writes the job's declaration files to their corresponding paths under `declaration/`, `report.md` and any model prose as `model-prose.md`. It writes an open writer's note to `.bellman-matsya/writer-note.md`, apart from the author's stage page. It never writes `economics.md` and keeps declaration files the job did not produce. A job that has ended has not necessarily converged: show the user `report.md`, whose section Status gives the job's final state and its reason, and use `--replace` only when the user asks for the folder's files to be replaced.
+
+Two plain commands complete the work, each with the session's identifier that `bellman-matsya project status` prints.
+
+- A question about the model, about a job's outputs or about the language: `bellman-matsya ask <session> "<question>"`. It is one turn of matsya-master, whose answer names the job it read and cites its sources. It starts a job only when the question asks for one, such as "Submit this as a job."
+- A reply to a job's questions: write the user's answer to all the questions in one file and run the command that `bellman-matsya project status` prints under the question, `bellman-matsya session add <session> <file> --replies-to <n>`, with the file's path in place of `<file>`. The first reply to the questions of the session's latest job starts the next job at once, with the reply in its text; follow it with `bellman-matsya job wait <job>` and write its files with step 4. A job's questions are the user's to answer: show them to the user, and send the user's answer, not one of your own.
+
+[Working on a project folder](03-working-on-a-project-folder.md) follows these commands through one project, with what each prints.
+
+## 5 The form of every answer
+
+Every command but `bellman-matsya` alone, `bellman-matsya configure` and `bellman-matsya docs` takes the option `--json`, with which it prints its answer as JSON in place of the lines it prints for a person: a command of a project folder prints the answer the client composes from the folder and the service's answers, and every other command prints the service's answer as it arrived. Read that form. A command ends with one of four exit statuses:
+
+- 0 when it was carried out;
+- 1 when the service refused the request, when the request could not be sent, or when a file could not be read or written: the command prints one sentence after `Error: ` on the standard error stream, the service's own sentence when the service refused;
+- 2 when the client refused the command without carrying it out: arguments the command does not accept, for which it prints its usage line and one sentence that names the fault and sends no request; or a command of a project folder that cannot be carried out where it is run, such as one run in a folder that is not a project, for which it prints one sentence after `Error: `;
+- 130 when the command was stopped with Ctrl-C: a job or a turn it was waiting for goes on running on the server, and the command prints the command that reads it.
+
+The sentence of a refusal names what to change; read it before running the command again.
+
+## 6 The command reference
+
+[The command reference](05-the-command-reference.md) gives every command of the client with its syntax, each option and its default, each line the command prints and when, the exit status of each outcome and each field of its `--json` answer; read it before running a command whose form this page does not give. `bellman-matsya docs` lists the pages of this guide with their titles, `bellman-matsya docs 05-the-command-reference` prints that page, and `bellman-matsya docs --all` prints every page in order. With `--online`, a page is read from the public Matsya client repository as it stands today, which may describe a newer client than the one installed.

@@ -24,9 +24,9 @@ from pathlib import Path
 
 import pytest
 
-import matsya
+import bellman_matsya
 from conftest import PASSAGE
-from matsya.client import AuthenticationError, MatsyaClient
+from bellman_matsya.client import AuthenticationError, MatsyaClient
 
 CLIENT = Path(__file__).resolve().parents[1]
 TIME = re.compile(r"^\d\d:\d\d:\d\d  ")
@@ -39,22 +39,29 @@ pytestmark = [
 ]
 
 
+def _files_line(job_id: str) -> str:
+    """The file label of the server response, including older service records."""
+    result = bellman_matsya.job(job_id)["result"]
+    heading = "Available files from cycle 1" if "available_writing" in result else "Files of the last cycle"
+    return heading + ": example.bl, note.md"
+
+
 def test_item_1_the_package_needs_nothing_beyond_python() -> None:
     tomllib = pytest.importorskip("tomllib")
-    import matsya
+    import bellman_matsya
 
     project = tomllib.loads((CLIENT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     assert "dependencies" not in project and "optional-dependencies" not in project
-    assert project["scripts"] == {"matsya": "matsya.cli:main"}
-    assert project["version"] == matsya.__version__
+    assert project["scripts"] == {"bellman-matsya": "bellman_matsya.cli:main"}
+    assert project["version"] == bellman_matsya.__version__
     imported = set()
-    for path in (CLIENT / "src" / "matsya").glob("*.py"):
+    for path in (CLIENT / "src" / "bellman_matsya").glob("*.py"):
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if isinstance(node, ast.Import):
                 imported |= {alias.name.split(".")[0] for alias in node.names}
             elif isinstance(node, ast.ImportFrom) and node.level == 0:
                 imported.add(node.module.split(".")[0])
-    assert imported - set(sys.stdlib_module_names) == {"matsya"}
+    assert imported - set(sys.stdlib_module_names) == {"bellman_matsya"}
 
 
 def test_item_2_each_command_against_the_service_of_the_test_configuration(service, run, tmp_path) -> None:
@@ -75,8 +82,8 @@ def test_item_2_each_command_against_the_service_of_the_test_configuration(servi
     assert status == 0
     assert [line for line in out.splitlines() if not TIME.match(line)][:3] == [
         f"model · stage · version 1 · job 1 · converged ({job_id}), session {job_session}",
-        "The job ended converged, with the reason source_agreement_and_semantic_fixed_point.",
-        "Files of the last cycle: example.bl, note.md",
+        f"The job ended converged, with the reason {bellman_matsya.job(job_id)['result']['reason']}.",
+        _files_line(job_id),
     ]
     assert any(line.endswith("(Prose-to-Bellman-Sym), cycle 1 of 1") for line in out.splitlines() if TIME.match(line))
 
@@ -108,25 +115,25 @@ def test_item_2_each_command_against_the_service_of_the_test_configuration(servi
     assert written["note.md"].strip() == "none"
     stage = folder / "declaration" / "stages" / "example" / "example.bl"
     assert stage.read_text(encoding="utf-8") == written["example.bl"]
-    # the model prose, which the scripted Model-prose-writer opens with the
-    # heading Structure (AMD-MAT-011 §3)
+    # the prose written from the initial elaborated object accompanies the
+    # declaration of iteration 1
     assert (folder / "economics.md").read_text(encoding="utf-8") == (
         f'---\njob: "{job_id}"\nlabel: "model · stage · version 1 · job 1 · converged"\n'
         f'session: "{job_session}"\nversion: 1\ndate: {job["updated_at"][:10]}\n---\n\n'
-        + service.model_prose
+        + job["result"]["available_writing"]["description"]
     )
     report = (folder / "report.md").read_text(encoding="utf-8").splitlines()
     assert [line for line in report if line.startswith("## ")] == [
         "## The job",
         "## Status",
-        "## Cycles and version",
+        "## Iterations and version",
         "## What did not match",
-        "## The round-trip comparison",
+        "## Comparison of elaborated semantic objects",
         "## Cost",
     ]
     assert "The judges agree on every heading." in report
-    assert "The round-trip stage files equal the written ones." in report
-    assert "The job ran 1 cycle. It was built from version 1 of the session's text." in report
+    assert "The elaborated semantic objects from the initial writing and iteration 1 are equivalent." in report
+    assert "The job ran 1 numbered iteration. It was built from version 1 of the session's text." in report
 
     # every iterate, from the full view, for training
     training = tmp_path / "training"
@@ -134,13 +141,17 @@ def test_item_2_each_command_against_the_service_of_the_test_configuration(servi
     assert status == 0
     full = json.loads((training / "iterates" / "record-full.json").read_text(encoding="utf-8"))
     (cycle,) = full["result"]["cycles"]
+    initial = training / "iterates" / "initial"
+    assert (initial / "example.bl").read_text(encoding="utf-8") == (
+        full["result"]["initial_writing"]["files"]["example.bl"]
+    )
+    assert (initial / "model-prose.md").read_text(encoding="utf-8") == full["result"]["description"]
     held = training / "iterates" / "cycle-1"
     assert (held / "example.bl").read_text(encoding="utf-8") == cycle["writing"]["files"]["example.bl"]
-    assert (held / "model-prose.md").read_text(encoding="utf-8") == full["result"]["description"]
-    assert (held / "round-trip-prose.md").read_text(encoding="utf-8") == cycle["prose_writing"]["description"]
-    assert (held / "round-trip" / "example.bl").read_text(encoding="utf-8") == (
-        cycle["reconstruction"]["files"]["example.bl"]
-    )
+    assert (held / "model-prose.md").read_text(encoding="utf-8") == cycle["prose_writing"]["description"]
+    assert job["result"]["available_writing"]["description"] == cycle["prose_writing"]["description"]
+    assert not (held / "round-trip-prose.md").exists()
+    assert not (held / "round-trip").exists()
     rest = json.loads((held / "cycle.json").read_text(encoding="utf-8"))
     assert (rest["judging"], rest["comparison"]) == (cycle["judging"], cycle["comparison"])
 
@@ -185,7 +196,7 @@ def test_item_3_a_missing_or_wrong_matsya_token_is_refused(service, run, monkeyp
         MatsyaClient("", service.url).index()
     assert refused.value.status == 401
     wrong = "msy_" + "f" * 32
-    monkeypatch.setenv("MATSYA_TOKEN", wrong)
+    monkeypatch.setenv("BELLMAN_MATSYA_TOKEN", wrong)
     status, out, err = run("search", "stage", "--json")
     assert (status, out) == (1, "")
     assert err.startswith(
@@ -219,7 +230,7 @@ def test_a_queued_job_of_a_session_is_cancelled_and_listed_by_its_label(service,
     built = re.search(r"^Job ([0-9a-f]{32}): queued$", out, re.MULTILINE).group(1)
     status, out, _ = run("job", "wait", built, "--interval", "0.05")
     assert status == 0
-    assert "The job ended converged, with the reason source_agreement_and_semantic_fixed_point." in out
+    assert f"The job ended converged, with the reason {bellman_matsya.job(built)['result']['reason']}." in out
 
     # the job runner's two workers are occupied, so that the next job of the
     # session stays queued until they are released
@@ -341,11 +352,11 @@ def test_a_turn_starts_a_job_that_follow_waits_for_and_writes(service, run, tmp_
         started,
         "",
         f"Job 1 started from version 2 of this session's text ({job_id}); "
-        f"follow it with: matsya job wait {job_id}",
+        f"follow it with: bellman-matsya job wait {job_id}",
         f"a household · stage · version 2 · job 1 · converged ({job_id}), session {session_id}",
-        "The job ended converged, with the reason source_agreement_and_semantic_fixed_point.",
-        "Files of the last cycle: example.bl, note.md",
-        f"Write the model folder and its report with: matsya job files {job_id} <folder>",
+        f"The job ended converged, with the reason {bellman_matsya.job(job_id)['result']['reason']}.",
+        _files_line(job_id),
+        f"Write the model folder and its report with: bellman-matsya job files {job_id} <folder>",
         f"Wrote 4 files to {folder}:",
         "  economics.md",
         "  report.md",
@@ -355,7 +366,7 @@ def test_a_turn_starts_a_job_that_follow_waits_for_and_writes(service, run, tmp_
 
     # the job was started by the turn, from the session's text with the
     # question, and the folder holds its products
-    turn_id = matsya.session(session_id)["turns"][-1]
+    turn_id = bellman_matsya.session(session_id)["turns"][-1]
     job = json.loads((folder / "record.json").read_text(encoding="utf-8"))
     assert (job["id"], job["started_by"], job["revision"], job["entry_numbers"]) == (job_id, turn_id, 2, [1, 2])
     stage = folder / "declaration" / "stages" / "example" / "example.bl"

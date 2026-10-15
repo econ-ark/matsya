@@ -1,10 +1,10 @@
 """The acceptance file of AMD-MAT-009 on the side of the client: item 5 of
 the amendment's §7 against the stand-in of the service, whose turn starts a
 job from the session when the question asks for one ("submit this as a
-job") and names it under `job_started`. `matsya ask` prints the job's line
+job") and names it under `job_started`. `bellman-matsya ask` prints the job's line
 when the result names a job and nothing when it holds null; with `--follow
-<folder>` it waits for the job as `matsya job wait` does and writes the
-model folder and the report as `matsya job files` does. The same against the
+<folder>` it waits for the job as `bellman-matsya job wait` does and writes the
+model folder and the report as `bellman-matsya job files` does. The same against the
 service itself is in `test_acceptance.py`."""
 
 from __future__ import annotations
@@ -60,7 +60,7 @@ def test_item_5_ask_prints_the_job_a_turn_started_and_follow_writes_its_folder(s
         *CITED,
         "",
         f"Job 1 started from version 4 of this session's text ({first}); "
-        f"follow it with: matsya job wait {first}",
+        f"follow it with: bellman-matsya job wait {first}",
     ]
 
     # with --follow the command waits for the job, printing its steps, and
@@ -85,11 +85,12 @@ def test_item_5_ask_prints_the_job_a_turn_started_and_follow_writes_its_folder(s
         *CITED,
         "",
         f"Job 2 started from version 6 of this session's text ({second}); "
-        f"follow it with: matsya job wait {second}",
+        f"follow it with: bellman-matsya job wait {second}",
         f"{MODEL} · stage · version 6 · job 2 · not_converged ({second}), session {session_id}",
         "The job ended not_converged, with the reason cycle_limit_reached.",
-        "Files of the last cycle: example.bl, methods.yml, note.md",
-        f"Write the model folder and its report with: matsya job files {second} <folder>",
+        "The returned declaration files are provisional; the job did not establish convergence.",
+        "Available provisional files from cycle 2: example.bl, methods.yml, note.md",
+        f"Write the model folder and its report with: bellman-matsya job files {second} <folder>",
         f"Wrote 6 files to {folder}:",
         "  economics.md",
         "  report.md",

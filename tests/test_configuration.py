@@ -8,8 +8,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from matsya import cli, config
-from matsya.client import MatsyaClient
+from bellman_matsya import cli, config
+from bellman_matsya.client import MatsyaClient
 
 
 class ClientConfigurationTests(unittest.TestCase):
@@ -25,43 +25,80 @@ class ClientConfigurationTests(unittest.TestCase):
         environment.start()
         self.addCleanup(environment.stop)
 
-    def test_missing_address_prevents_a_client_request(self):
-        os.environ["MATSYA_TOKEN"] = "msy_test"
-        with self.assertRaisesRegex(config.ConfigurationError, "MATSYA_SERVER"):
-            config.load_config()
-        with patch("matsya.cli.MatsyaClient") as client, patch("sys.stderr"):
-            with self.assertRaises(SystemExit) as stopped:
-                cli._build_client()
-        self.assertEqual(stopped.exception.code, 1)
-        client.assert_not_called()
+    def test_default_address_is_used_when_only_the_token_is_set(self):
+        os.environ["BELLMAN_MATSYA_TOKEN"] = "msy_test"
+        self.assertEqual(config.load_config()["server"], config.DEFAULT_SERVER_URL)
+        with patch("bellman_matsya.cli.MatsyaClient") as client:
+            cli._build_client()
+        # with no personal Anthropic key selected, the client holds none
+        # (AMD-MAT-021 §2.2)
+        client.assert_called_once_with(
+            token="msy_test", server_url=config.DEFAULT_SERVER_URL, anthropic_api_key=None
+        )
 
     def test_environment_overrides_saved_address_and_token(self):
         saved = config.save_config("saved-test-token", "https://saved.example.invalid/")
         self.assertEqual(saved.stat().st_mode & 0o777, 0o600)
         self.assertEqual(config.load_config()["server"], "https://saved.example.invalid")
         os.environ.update(
-            MATSYA_SERVER="https://override.example.invalid/",
-            MATSYA_TOKEN="environment-test-token",
+            BELLMAN_MATSYA_SERVER="https://override.example.invalid/",
+            BELLMAN_MATSYA_TOKEN="environment-test-token",
         )
         self.assertEqual(
             config.load_config(),
             {"server": "https://override.example.invalid", "token": "environment-test-token"},
         )
 
-    def test_configure_saves_explicit_address_without_network(self):
-        with patch("builtins.input", side_effect=["msy_test", "https://service.example.invalid"]):
+    def test_the_earlier_clients_environment_does_not_configure_bellman(self):
+        os.environ.update(MATSYA_TOKEN="old-test-token", MATSYA_SERVER="https://old.example.invalid")
+        self.assertTrue(config.first_use())
+        self.assertEqual(config.load_config(), {"server": config.DEFAULT_SERVER_URL, "token": ""})
+        config.save_config("bellman-test-token", "https://bellman.example.invalid")
+        self.assertEqual(
+            config.load_config(),
+            {"server": "https://bellman.example.invalid", "token": "bellman-test-token"},
+        )
+
+    def test_configure_prompts_only_for_token_without_network(self):
+        with patch("builtins.input", side_effect=["msy_test"]) as prompt:
             # the client's opener and `urlopen` both send through `OpenerDirector.open`
             with patch("builtins.print"), patch("urllib.request.OpenerDirector.open") as network:
                 cli._run_configure()
+        prompt.assert_called_once_with("Enter your Matsya token: ")
         network.assert_not_called()
-        self.assertEqual(config.load_config()["server"], "https://service.example.invalid")
+        self.assertEqual(config.load_config(), {"server": config.DEFAULT_SERVER_URL, "token": "msy_test"})
+        self.assertNotIn("server =", config.CONFIG_FILE.read_text())
+
+    def test_reconfiguring_token_preserves_a_saved_custom_address(self):
+        config.save_config("msy_old", "https://service.example.invalid")
+        os.environ["BELLMAN_MATSYA_SERVER"] = "https://temporary.example.invalid"
+        with patch("builtins.input", side_effect=["msy_new"]):
+            with patch("builtins.print"):
+                cli._run_configure()
+        self.assertEqual(config.load_config()["server"], "https://temporary.example.invalid")
+        del os.environ["BELLMAN_MATSYA_SERVER"]
+        self.assertEqual(
+            config.load_config(),
+            {"server": "https://service.example.invalid", "token": "msy_new"},
+        )
+
+    def test_temporary_address_does_not_become_saved_default(self):
+        os.environ["BELLMAN_MATSYA_SERVER"] = "https://temporary.example.invalid"
+        config.save_config("msy_test")
+        del os.environ["BELLMAN_MATSYA_SERVER"]
+        self.assertEqual(config.load_config()["server"], config.DEFAULT_SERVER_URL)
+        self.assertNotIn("server =", config.CONFIG_FILE.read_text())
+
+    def test_explicit_blank_address_is_refused(self):
         with self.assertRaises(config.ConfigurationError):
             config.save_config("msy_test", "")
 
     def test_methods_call_the_routes_of_spec_0_3(self):
         client = MatsyaClient("msy_test", "https://service.example.invalid")
 
-        def answer(method, path, body=None):
+        # `options` holds `personal_key`, which marks the three requests that
+        # carry a personal Anthropic key (AMD-MAT-021 §2.3)
+        def answer(method, path, body=None, **options):
             return {"id": "t1", "state": "finished" if "/turns/" in path else "converged"}
 
         with patch.object(client, "_request", side_effect=answer) as request:

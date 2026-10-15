@@ -3,10 +3,10 @@
 The guide's pages are the Markdown files of the package's folder `docs`,
 installed with the package as its data (AMD-MAT-015 §2). A page is named by
 its path within that folder without `.md`: `index`, the guide's first page,
-then the numbered pages, such as `01-working-from-the-command-line`, and a
-page of a sub-folder by the sub-folder's name and its own, such as
-`dev-guide/index`. `matsya docs` lists and prints the pages, and `matsya`
-alone prints the folder that holds them. `matsya docs --online` reads a page
+then the numbered pages, such as `00-for-a-local-model`, and a page of a
+sub-folder by the sub-folder's name and its own, such as `dev-guide/index`.
+`bellman-matsya docs` lists and prints the pages, and `bellman-matsya` alone prints the
+folder that holds them. `bellman-matsya docs --online` reads a page
 as the client's public repository holds it today, over HTTPS, so that a
 reader sees a corrected page without installing a new version of the
 client. The names of the pages are the installed guide's in either case,
@@ -26,9 +26,7 @@ from typing import Any
 # the ending of a page's file name, and the name of a folder's first page
 SUFFIX = ".md"
 FIRST = "index"
-# the folder of the guide's pages in the client's public repository, the
-# folder the release script fills, and the seconds a request for one of its
-# pages waits for an answer (AMD-MAT-015 §2)
+# The guide copies in the public Matsya client repository and the request timeout.
 ONLINE = "https://raw.githubusercontent.com/econ-ark/matsya/main/docs/"
 ONLINE_TIMEOUT = 30
 
@@ -41,7 +39,7 @@ class OnlineError(Exception):
 def folder() -> Any:
     """The installed folder of the pages, the package's folder `docs`: a
     `pathlib.Path` where the package is installed as files."""
-    return importlib.resources.files("matsya") / "docs"
+    return importlib.resources.files("bellman_matsya") / "docs"
 
 
 def names() -> list[str]:

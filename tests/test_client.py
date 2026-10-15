@@ -20,10 +20,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-import matsya
-from conftest import ANSWER, CITATION, DIGEST, PAPER, PASSAGE, QUESTION, STAGE
-from matsya.cli import CANCEL_REQUESTED
-from matsya.client import AuthenticationError, MatsyaClient, MatsyaError
+import bellman_matsya
+from conftest import ANSWER, CITATION, DEFAULT_CONFIGURATION, DIGEST, PAPER, PASSAGE, QUESTION, STAGE
+from bellman_matsya.cli import CANCEL_REQUESTED
+from bellman_matsya.client import AuthenticationError, MatsyaClient, MatsyaError
 
 TIME = re.compile(r"^\d\d:\d\d:\d\d  ")
 
@@ -66,6 +66,7 @@ def test_index_search_and_passage(stand_in, run) -> None:
     assert out.splitlines() == [
         f"Index digest: {DIGEST}",
         "Embedding model: stand-in-embedding-v1",
+        f"Configuration ID: {DEFAULT_CONFIGURATION}",
         "Configuration version: 0.3.5",
     ]
     status, out, _ = run(
@@ -108,8 +109,8 @@ def test_a_description_is_kept_in_a_session_named_after_the_file(stand_in, run, 
         f"Session {session_id}: model",
         f"Entry 1: the text of {description}",
         f"Job {job_id}: queued",
-        f"Follow it with: matsya job wait {job_id}",
-        f"The session, where the job's questions and your replies are kept: matsya session show {session_id}",
+        f"Follow it with: bellman-matsya job wait {job_id}",
+        f"The session, where the job's questions and your replies are kept: bellman-matsya session show {session_id}",
     ]
 
     # the job's questions are appended to the session, after the file's text;
@@ -120,7 +121,7 @@ def test_a_description_is_kept_in_a_session_named_after_the_file(stand_in, run, 
         f"model · stage · version 1 · job 1 · needs_input ({job_id}), session {session_id}",
         "The job ended needs_input, with the reason distribution_needs_specification.",
     ]
-    assert f"The questions stand as entries of session {session_id}: matsya session show {session_id}" in out
+    assert f"The questions stand as entries of session {session_id}: bellman-matsya session show {session_id}" in out
     status, out, _ = run("session", "show", session_id)
     lines = out.splitlines()
     assert lines[:5] == [
@@ -160,7 +161,7 @@ def test_a_description_is_kept_in_a_session_named_after_the_file(stand_in, run, 
     assert re.match(r"Session [0-9a-f]{32}: a household\nEntry 1: the text of ", out)
 
     # the same through the module's function
-    started = matsya.start_job(description, name="a second household", max_cycles=2, target="stage")
+    started = bellman_matsya.start_job(description, name="a second household", max_cycles=2, target="stage")
     assert (started["session"]["name"], started["entry"]["entry"]["number"]) == ("a second household", 1)
     assert started["entry"]["entry"]["text"] == "A household saves out of cash on hand."
     assert started["job"]["state"] == "queued"
@@ -193,11 +194,11 @@ def test_a_job_with_no_session_is_submitted_followed_and_written(stand_in, run, 
     ]
     assert out.splitlines() == [
         f"Job {job_id}: queued",
-        f"Follow it with: matsya job wait {job_id}",
+        f"Follow it with: bellman-matsya job wait {job_id}",
         "The job has no session, and its questions stand in its record only: "
-        f"matsya job status {job_id}",
+        f"bellman-matsya job status {job_id}",
     ]
-    started = matsya.start_job(description, no_session=True, target="stage")
+    started = bellman_matsya.start_job(description, no_session=True, target="stage")
     assert (started["session"], started["entry"], started["job"]["state"]) == (None, None, "queued")
     assert [path for _, path, _ in _sent(stand_in)] == ["/v1/model-iterations"]
 
@@ -215,8 +216,8 @@ def test_a_job_with_no_session_is_submitted_followed_and_written(stand_in, run, 
     assert _final(out) == [
         f"stage · converged ({job_id}), no session",
         "The job ended converged, with the reason source_agreement_and_semantic_fixed_point.",
-        "Files of the last cycle: example.bl, note.md",
-        f"Write the model folder and its report with: matsya job files {job_id} <folder>",
+        "Available files from cycle 2: example.bl, note.md",
+        f"Write the model folder and its report with: bellman-matsya job files {job_id} <folder>",
     ]
     status, out, _ = run("job", "status", job_id)
     assert out.splitlines()[0] == f"stage · converged ({job_id}), no session"
@@ -259,14 +260,14 @@ def test_a_job_from_a_session_asks_and_the_reply_starts_the_next_attempt(stand_i
     assert stand_in.requests[-1]["body"] == {"session": session_id, "target": "stage"}
     job_id = _identifier(r"^Job ([0-9a-f]{32}): queued$", out)
     assert out.splitlines()[-1] == (
-        f"The session, where the job's questions and your replies are kept: matsya session show {session_id}"
+        f"The session, where the job's questions and your replies are kept: bellman-matsya session show {session_id}"
     )
 
     status, out, _ = run("job", "wait", job_id, "--interval", "0")
     assert status == 0
     assert "The job ended needs_input, with the reason distribution_needs_specification." in out
     assert f"  1. {QUESTION}" in out
-    assert f"The questions stand as entries of session {session_id}: matsya session show {session_id}" in out
+    assert f"The questions stand as entries of session {session_id}: bellman-matsya session show {session_id}" in out
 
     status, out, _ = run("session", "show", session_id)
     assert f"  2. question, from job {job_id}" in out
@@ -281,7 +282,7 @@ def test_a_job_from_a_session_asks_and_the_reply_starts_the_next_attempt(stand_i
         "text": "Income y is lognormal with mean one.\n",
         "replies_to": 2,
     }
-    scheduled = _identifier(r"^Follow it with: matsya job wait ([0-9a-f]{32})$", out)
+    scheduled = _identifier(r"^Follow it with: bellman-matsya job wait ([0-9a-f]{32})$", out)
     status, out, _ = run("job", "wait", scheduled, "--interval", "0")
     assert "The job ended converged, with the reason source_agreement_and_semantic_fixed_point." in out
 
@@ -366,14 +367,14 @@ def test_json_prints_the_service_answer_unchanged(stand_in, run, tmp_path) -> No
 
 def test_a_refused_matsya_token_is_reported_without_the_token(stand_in, run, monkeypatch) -> None:
     wrong = "msy_" + "f" * 32
-    monkeypatch.setenv("MATSYA_TOKEN", wrong)
+    monkeypatch.setenv("BELLMAN_MATSYA_TOKEN", wrong)
     stand_in.echo_token = True
     status, out, err = run("index")
     assert (status, out) == (1, "")
     assert err == (
         "Error: The service refused the request (401): The Matsya bearer token is invalid: "
-        "<Matsya token>. Run matsya configure to save the Matsya token AAS gave you, or set "
-        "MATSYA_TOKEN.\n"
+        "<Matsya token>. Run bellman-matsya configure to save the Matsya token AAS gave you, or set "
+        "BELLMAN_MATSYA_TOKEN.\n"
     )
     with pytest.raises(AuthenticationError) as refused:
         MatsyaClient(wrong, stand_in.url).index()
@@ -437,7 +438,7 @@ def test_arguments_the_routes_do_not_accept_are_refused_before_any_request(stand
     status, _, err = run("job", "submit", str(latin), "--target", "stage")
     assert (status, err) == (1, f"Error: {latin} is not text in UTF-8.\n")
     with pytest.raises(ValueError, match="takes session or no_session, not both"):
-        matsya.start_job(description, session="0" * 32, no_session=True, target="stage")
+        bellman_matsya.start_job(description, session="0" * 32, no_session=True, target="stage")
     assert stand_in.requests == []
 
 
@@ -450,7 +451,8 @@ def test_a_refusal_after_the_session_was_created_names_the_session(stand_in, run
     assert err == (
         "Error: The service refused the request (422): max_cycles must be an integer from 1 to 5. "
         f"Session {session_id} holds the text of {description} as entry 1, and no job was started "
-        f"from it; start one with: matsya job submit --session {session_id} --target period\n"
+        f"from it; start one with: bellman-matsya job submit --session {session_id} "
+        "--target period --max-cycles 9\n"
     )
     with pytest.raises(MatsyaError) as refused:
         MatsyaClient(stand_in.token, stand_in.url).start_job(description, name="x" * 201, target="stage")
@@ -579,7 +581,7 @@ def test_a_queued_or_running_job_is_cancelled_and_an_ended_job_is_not(stand_in, 
         f"Job {running}: running",
         "Now at step preparation (the Model-prose-writer and the prose-source-judge).",
         CANCEL_REQUESTED,
-        f"Follow it with: matsya job wait {running}",
+        f"Follow it with: bellman-matsya job wait {running}",
     ]
     status, out, _ = run("job", "wait", running, "--interval", "0")
     assert (status, out.splitlines()) == (
@@ -587,7 +589,7 @@ def test_a_queued_or_running_job_is_cancelled_and_an_ended_job_is_not(stand_in, 
         [
             f"Household with firms · stage · version 1 · job 2 · cancelled ({running}), session {session_id}",
             "The job ended cancelled, with the reason cancelled_by_user.",
-            f"Write the model folder and its report with: matsya job files {running} <folder>",
+            f"Write the model folder and its report with: bellman-matsya job files {running} <folder>",
         ],
     )
 
@@ -598,7 +600,7 @@ def test_a_queued_or_running_job_is_cancelled_and_an_ended_job_is_not(stand_in, 
         client.cancel_job(running)
     assert (refused.value.status, refused.value.detail) == (409, "The job has ended")
     third = client.submit_job(session=session_id, target="stage")["id"]
-    cancelled = matsya.cancel_job(third)
+    cancelled = bellman_matsya.cancel_job(third)
     assert (cancelled["state"], cancelled["cancel_requested"]) == ("cancelled", True)
     assert cancelled["label"]["text"] == "Household with firms · stage · job 3 · cancelled"
 
@@ -615,7 +617,7 @@ def test_a_session_lists_its_jobs_by_label_and_selects_the_job_its_questions_rea
     reply = tmp_path / "reply.md"
     reply.write_text("Income y is lognormal with mean one.\n", encoding="utf-8")
     status, out, _ = run("session", "add", session_id, str(reply), "--replies-to", "2")
-    second = _identifier(r"^Follow it with: matsya job wait ([0-9a-f]{32})$", out)
+    second = _identifier(r"^Follow it with: bellman-matsya job wait ([0-9a-f]{32})$", out)
     status, out, _ = run("job", "wait", second, "--interval", "0")
     assert _final(out)[:2] == [
         f"Household with firms · stage · version 3 · job 2 · converged ({second}), session {session_id}",
@@ -648,7 +650,7 @@ def test_a_session_lists_its_jobs_by_label_and_selects_the_job_its_questions_rea
     assert out.splitlines() == [
         f"Selected job of session {session_id}: Household with firms · stage · version 1 · job 1 · needs_input ({first})",
         "A question asked in the session reads this job's outputs; clear the selection with: "
-        f"matsya session select {session_id} --none",
+        f"bellman-matsya session select {session_id} --none",
     ]
     status, out, _ = run("session", "show", session_id)
     assert f"Selected job: Household with firms · stage · version 1 · job 1 · needs_input ({first})" in out.splitlines()
@@ -678,6 +680,6 @@ def test_a_session_lists_its_jobs_by_label_and_selects_the_job_its_questions_rea
     # the same through the client and the module's function
     client = MatsyaClient(stand_in.token, stand_in.url)
     assert client.select_job(session_id, second)["selected_job"] == second
-    listed = matsya.select_job(session_id, None)
+    listed = bellman_matsya.select_job(session_id, None)
     assert listed["selected_job"] is None
     assert [job["id"] for job in listed["jobs"]] == [first, second, queued]

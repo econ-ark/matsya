@@ -1,10 +1,10 @@
 """The acceptance file of AMD-MAT-012 on the side of the client: a paper is
 sent as its text, in Markdown or LaTeX, and a PDF is refused (§2; items 1 to
 3 of §4). Against the stand-in of the service: a PDF, known by its name or
-its first bytes, is refused by `matsya job submit` and `matsya session add`
+its first bytes, is refused by `bellman-matsya job submit` and `bellman-matsya session add`
 with exit status 2 and by `start_job` with `ValueError`, each with the fixed
 sentence, before any request, and the argument that sent a PDF is gone;
-`matsya job submit <file> --paper` appends the paper to the job's session as
+`bellman-matsya job submit <file> --paper` appends the paper to the job's session as
 an entry of the kind `paper` and starts the job from that session, whose
 label the job carries, and with `--no-session` sends the paper as the job's
 source, its text unchanged; `start_job` and `submit_job` take `paper=True`;
@@ -13,8 +13,8 @@ sentence and records a paper's `references`. The former names of the PDF's
 field, of the argument that sent it and of the record's page references are
 looked for in the client's files. Against the service of the test
 configuration, a Markdown paper submitted with `--paper --target stage`
-runs from its session as a paper, and its record, in the schema
-`matsya-model-iteration/6`, holds its references."""
+runs from its session as a paper, and its current record holds its references.
+The stand-in retains `/6` records for client compatibility checks."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-import matsya
+import bellman_matsya
 from conftest import (
     EARLIER_PAPER_FORMS,
     LATEX,
@@ -37,12 +37,12 @@ from conftest import (
     SCHEMA,
     SERVICE_TESTS,
 )
-from matsya.client import PDF_REFUSAL, MatsyaClient, MatsyaError
+from bellman_matsya.client import PDF_REFUSAL, MatsyaClient, MatsyaError
 
 CLIENT = Path(__file__).resolve().parents[1]
-GUIDE = CLIENT.parents[2] / "docs" / "matsya" / "user-guide"
+GUIDE = CLIENT.parents[1] / "docs" / "matsya" / "user-guide"
 # the two pages of the user guide that describe a paper
-PAGES = ("01-working-from-the-command-line.md", "01a-the-python-module.md")
+PAGES = ("02-working-from-the-command-line.md", "06-the-python-module.md")
 TIME = re.compile(r"^\d\d:\d\d:\d\d  ")
 # the service's libraries warn of their own deprecations under Python 3.14;
 # a warning of the client is still shown
@@ -95,12 +95,12 @@ def test_item_3_a_pdf_is_refused_before_any_request(stand_in, run, tmp_path) -> 
         ("session", "add", "0" * 32, str(renamed)),
     ):
         status, out, err = run(*arguments)
-        assert (status, out, err.splitlines()[-1]) == (2, "", f"matsya: error: {PDF_REFUSAL}"), arguments
+        assert (status, out, err.splitlines()[-1]) == (2, "", f"bellman-matsya: error: {PDF_REFUSAL}"), arguments
 
     client = MatsyaClient(stand_in.token, stand_in.url)
     for start in (
-        lambda: matsya.start_job(pdf, target="stage"),
-        lambda: matsya.start_job(pdf, no_session=True, paper=True, target="stage"),
+        lambda: bellman_matsya.start_job(pdf, target="stage"),
+        lambda: bellman_matsya.start_job(pdf, no_session=True, paper=True, target="stage"),
         lambda: client.start_job(pdf, session="0" * 32, paper=True, target="stage"),
         lambda: client.start_job(renamed, name="a paper", paper=True, target="stage"),
     ):
@@ -110,7 +110,7 @@ def test_item_3_a_pdf_is_refused_before_any_request(stand_in, run, tmp_path) -> 
     # the argument that sent a PDF is removed, with no form kept in its place
     removed = {"pdf" + "_path": pdf}
     with pytest.raises(TypeError):
-        matsya.submit_job(target="stage", **removed)
+        bellman_matsya.submit_job(target="stage", **removed)
     with pytest.raises(TypeError):
         client.submit_job(target="stage", **removed)
     assert stand_in.requests == [] and stand_in.sessions == {}
@@ -138,8 +138,8 @@ def test_item_2_a_paper_is_appended_to_the_session_as_a_paper_entry(stand_in, ru
         f"Session {session_id}: saving",
         f"Entry 1 (paper): the text of {paper}",
         f"Job {job_id}: queued",
-        f"Follow it with: matsya job wait {job_id}",
-        f"The session, where the job's questions and your replies are kept: matsya session show {session_id}",
+        f"Follow it with: bellman-matsya job wait {job_id}",
+        f"The session, where the job's questions and your replies are kept: bellman-matsya session show {session_id}",
     ]
     status, out, _ = run("job", "wait", job_id, "--interval", "0")
     assert _final(out)[0] == (
@@ -155,8 +155,8 @@ def test_item_2_a_paper_is_appended_to_the_session_as_a_paper_entry(stand_in, ru
     notes = tmp_path / "notes.txt"
     notes.write_text("Income is paid at the start of the period.\n", encoding="utf-8")
     appended = [
-        matsya.start_job(latex, session=session_id, paper=True, target="stage"),
-        matsya.start_job(notes, session=session_id, target="stage"),
+        bellman_matsya.start_job(latex, session=session_id, paper=True, target="stage"),
+        bellman_matsya.start_job(notes, session=session_id, target="stage"),
     ]
     assert [(held["session"], held["entry"]["entry"]["kind"]) for held in appended] == [
         (None, "paper"),
@@ -191,8 +191,8 @@ def test_item_1_a_paper_with_no_session_is_sent_as_its_text(stand_in, run, tmp_p
     ]
     assert out.splitlines() == [
         f"Job {job_id}: queued",
-        f"Follow it with: matsya job wait {job_id}",
-        f"The job has no session, and its questions stand in its record only: matsya job status {job_id}",
+        f"Follow it with: bellman-matsya job wait {job_id}",
+        f"The job has no session, and its questions stand in its record only: bellman-matsya job status {job_id}",
     ]
     status, _, _ = run("job", "submit", str(latex), "--no-session", "--target", "stage")
     assert status == 0 and _sent(stand_in) == [
@@ -201,14 +201,14 @@ def test_item_1_a_paper_with_no_session_is_sent_as_its_text(stand_in, run, tmp_p
 
     paper = tmp_path / "saving.md"
     paper.write_text(PAPER, encoding="utf-8")
-    matsya.start_job(paper, no_session=True, paper=True, target="period")
-    matsya.submit_job(source_text=PAPER, paper=True, max_cycles=2, target="trellis")
+    bellman_matsya.start_job(paper, no_session=True, paper=True, target="period")
+    bellman_matsya.submit_job(source_text=PAPER, paper=True, max_cycles=2, target="trellis")
     assert [body for _, _, body in _sent(stand_in)] == [
         {"source": {"kind": "paper", "text": PAPER}, "target": "period"},
         {"source": {"kind": "paper", "text": PAPER}, "target": "trellis", "max_cycles": 2},
     ]
     with pytest.raises(ValueError, match="^paper marks source_text as a paper's text"):
-        matsya.submit_job(session="0" * 32, paper=True, target="stage")
+        bellman_matsya.submit_job(session="0" * 32, paper=True, target="stage")
     assert stand_in.requests == []
     status, out, _ = run("job", "submit", "--help")
     assert status == 0 and "--paper" in out
@@ -237,6 +237,7 @@ def test_the_stand_in_refuses_the_earlier_forms_and_records_references(stand_in)
         assert (refused.value.status, refused.value.detail) == (422, PAPER_AS_TEXT)
     assert stand_in.jobs == {}
 
+    assert SCHEMA == "matsya-model-iteration/6"
     assert {record["schema"] for record in RECORDS.values()} == {SCHEMA}
     assert RECORDS["paper"]["references"] == PAPER_REFERENCES
     assert PAPER.splitlines()[PAPER_REFERENCES[0]["lines"][0] - 1].startswith(PAPER_REFERENCES[0]["point"])
@@ -251,7 +252,8 @@ def test_the_stand_in_refuses_the_earlier_forms_and_records_references(stand_in)
         return
     from matsya_service import processor
 
-    assert (processor.PAPER_AS_TEXT, processor.SCHEMA) == (PAPER_AS_TEXT, SCHEMA)
+    assert processor.PAPER_AS_TEXT == PAPER_AS_TEXT
+    assert processor.SCHEMA == "matsya-model-iteration/7"
     for source in earlier:
         with pytest.raises(processor.RequestRefused, match=re.escape(PAPER_AS_TEXT)):
             processor.check_request({"source": source, "target": "stage"})
@@ -264,7 +266,7 @@ def test_the_former_names_appear_nowhere_in_the_client() -> None:
     that sent it nor the record's page references."""
     former = ("pdf" + "_base64", "pdf" + "_path", "page" + "_references")
     paths = [
-        *sorted((CLIENT / "src" / "matsya").glob("*.py")),
+        *sorted((CLIENT / "src" / "bellman_matsya").glob("*.py")),
         *sorted((CLIENT / "tests").glob("*.py")),
         CLIENT / "README.md",
         *[CLIENT / "docs" / page for page in PAGES],
@@ -282,8 +284,7 @@ def test_item_1_against_the_service_a_markdown_paper_runs_from_its_session(servi
     is appended to a session named after the file as a `paper` entry, and
     the job started from that session carries the session's label, reads
     the session's text as a paper, its kind named in the Model-prose-writer's
-    message, and converges. Its record, in the schema
-    `matsya-model-iteration/6`, names the source as a paper by the digest of
+    message, and converges. Its `/7` record names the source as a paper by the digest of
     the session's text and holds the reference the scripted
     Model-prose-writer gave, with the heading it stands under and the lines
     on which the service found its quotation in the session's text."""
@@ -308,14 +309,14 @@ def test_item_1_against_the_service_a_markdown_paper_runs_from_its_session(servi
     assert status == 0
     assert _final(out)[:2] == [
         f"two-controls · stage · version 1 · job 1 · converged ({job_id}), session {session_id}",
-        "The job ended converged, with the reason source_agreement_and_semantic_fixed_point.",
+        f"The job ended converged, with the reason {bellman_matsya.job(job_id)['result']['reason']}.",
     ]
     assert "===== the kind of the source material =====\n\npaper\n" in service.caller.prompts[0]
 
-    record = matsya.job(job_id, view="full")["result"]
+    record = bellman_matsya.job(job_id, view="full")["result"]
     material = f"Entry 1 (paper):\n{text.strip()}"
     line = next(number for number, held in enumerate(material.splitlines(), 1) if QUOTE in held)
-    assert record["schema"] == SCHEMA == "matsya-model-iteration/6"
+    assert record["schema"] == "matsya-model-iteration/7"
     assert record["source"] == {
         "kind": "paper",
         "sha256": [hashlib.sha256(material.encode("utf-8")).hexdigest()],

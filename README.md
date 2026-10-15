@@ -1,75 +1,58 @@
-# Matsya client
+---
+title: Matsya client
+audience: developer
+type: index
+topic: [matsya]
+---
 
-The current Project Bellman client is in [`bellman-matsya-client/`](bellman-matsya-client/README.md). Install it with `python -m pip install 'git+https://github.com/econ-ark/matsya.git#subdirectory=bellman-matsya-client'` and use the `bellman-matsya` command. The root package described below is an earlier Bellman client that installs the separate `matsya` command.
+# Matsya client
 
 Matsya is a service of Project Bellman. It reads an economist's description of a dynamic model, or a paper, writes the model in Bellman-SYM, the project's language for staged Bellman problems, checks what it wrote, and answers questions about models and about the language. It holds an index of the project's documentation and of the research literature on dynamic programming, and saved instructions that direct how it writes a model and answers a question, so that it can help an economist develop a dynamic model.
 
-This package installs the command `matsya`, through which you, or the coding assistant working for you, reach the service. The command runs on your computer. On the server, **matsya-architect** runs a **job**, one attempt to write and check the stage files of a model from its description; **matsya-master** answers questions in a **session**, the saved description, questions and replies of one model. Install and configure the command once, in steps 1 and 2. Then either let your assistant use it, step 3, or run the commands yourself, step 4.
+This package installs the command `bellman-matsya`, through which you, or the coding assistant working for you, reach the service. The command runs on your computer. On the server, **matsya-architect** runs a **job**, one attempt to write and check the stage files of a model from its description; **matsya-master** answers questions in a **session**, the saved description, questions and replies of one model. Install and configure the command once, in steps 1 and 2. Then either let your assistant use it, step 3, or run the commands yourself, step 4; step 5 keeps one model, its session and the files Matsya writes for it together in one folder.
 
-## 1 Install the command
+## 1 Install the Bellman client
 
-Open a terminal, the application in which you type commands (Terminal on a Mac, a shell on Linux, PowerShell on Windows), and type the following line, then press Enter:
+With Python 3.10 or newer, install the Bellman client from the public [Matsya repository](https://github.com/econ-ark/matsya), whose root is this package. This needs Git, but it does not require a Bellman checkout on your computer:
 
-```
-pip install git+https://github.com/econ-ark/matsya
-```
-
-The installation needs Python 3.10 or newer and nothing else, and it ends with a line saying that `econ-ark-matsya` was installed. If your system's Python refuses to install packages, the message says so, type `pipx install git+https://github.com/econ-ark/matsya` instead, which gives the command an environment of its own. Afterwards, typing `matsya --help` prints the list of commands, which shows that the installation worked.
-
-## 2 Enter your Matsya token
-
-The service knows you by a **Matsya token**, a string of letters and digits beginning `msy_`, which the service's administrator sends you by private message together with the service's **address**, a line beginning `http://` or `https://`. Have both at hand, because the next command asks for them one after the other. In the terminal, type
-
-```
-matsya configure
+```sh
+python -m pip install git+https://github.com/econ-ark/matsya.git
+bellman-matsya --help
 ```
 
-and press Enter. Because no configuration file exists yet, the command first prints two lines meant for a coding assistant, which no command prints once your Matsya token and the address are saved:
+The package is `bellman-matsya-client`, the command is `bellman-matsya`, and the Python module is `bellman_matsya`. The client connects to an existing service; this installation does not start or install the server. It is the one client of the public Matsya repository: the earlier package `econ-ark-matsya`, whose command was `matsya`, was removed from the repository on 16 October 2026.
 
-```
-This is the first use of matsya on this machine.
-A model working for the user reads the guide first: matsya docs --all
-```
+Installing the Bellman package does not uninstall the earlier package. If you no longer use the earlier `matsya` client, remove it from the environment that supplied its command with `python -m pip uninstall econ-ark-matsya`, or `pipx uninstall econ-ark-matsya` for a pipx installation. `type -a matsya bellman-matsya` on macOS or Linux, or `Get-Command matsya,bellman-matsya -All` in PowerShell, shows which installations your terminal selects. Use `bellman-matsya` for Bellman work.
 
-Next it prints its title line,
+An old standalone SSH launcher, including `econ-ark-matsya.ssh-remote.bak`, is not removed by uninstalling a Python package. Remove obsolete copies during the upgrade. The current Bellman client does not use that launcher; an assistant must not run it as a fallback when `bellman-matsya` fails.
 
-```
-Matsya: save your Matsya token and the service address
-```
+To update an existing Bellman client, run:
 
-and then asks for the token:
-
-```
-Enter your Matsya token:
+```sh
+python -m pip install --force-reinstall git+https://github.com/econ-ark/matsya.git
 ```
 
-Paste the Matsya token after the colon, exactly as you received it, and press Enter. If what you pasted does not begin with `msy_`, the command stops with the sentence `Error: a Matsya token begins with msy_. Check the Matsya token you received and try again.`, and you type `matsya configure` once more. Otherwise it asks for the address:
+Your saved Bellman token and any custom service address remain in place.
 
-```
-Enter the service address supplied by Econ-ARK-admin:
-```
+## 2 Enter the new Bellman token
 
-Paste the address and press Enter. The command then prints where it saved the two,
+The administrator sends you a **Matsya token**, a private string beginning `msy_`. The client uses `http://45.55.225.169:8710` as the Bellman Matsya service address automatically. This preliminary HTTP connection sends the token and your requests without encryption. Keep the token private.
 
-```
-Matsya token and service address saved to /Users/you/.config/matsya/config.toml
-```
+Run `bellman-matsya configure` and enter the new token when prompted. The command saves the token in `~/.config/bellman-matsya/config.toml` and keeps any custom service address already saved there. Without a custom address, the client uses its built-in address. The environment variables `BELLMAN_MATSYA_TOKEN` and `BELLMAN_MATSYA_SERVER` override saved values; remove outdated values before configuring a new token. The earlier `~/.config/matsya/config.toml` and `MATSYA_TOKEN` or `MATSYA_SERVER` variables are not read. The token is visible while you paste it, but later command output does not print it. Give it to the client in your terminal, not to an assistant in chat.
 
-with your own home folder in place of `/Users/you`, followed by the reminder that the service keeps the entries of your sessions and the records of your jobs, and the line `Check your access with: matsya index`. The two values are saved in that private file only. The client does not print the Matsya token in later output, though a connection error may show the service's address; the token is shown on the screen while you paste it, so paste it where no one is looking over your shoulder. The client sends the token with each request, and if the address begins `http://` rather than `https://`, the request sends it without encryption.
+Run `bellman-matsya index` to check access. A successful response prints the index digest, embedding model and configuration version. A refusal means the token was not accepted; a connection error means the address or connection needs attention. Check those with the administrator before starting a job.
 
-To check, type `matsya index` and press Enter. When the service accepts you, it prints three lines: the index digest, a fingerprint of the indexed material the service reads, the embedding model, and the configuration's version. When it does not, it prints one line beginning `Error: The service refused the request (401)`, which means the token was mistyped or is not known to the service, or a line saying that the connection failed, which means the address was mistyped or the service is unreachable; in either case type `matsya configure` again and enter the values once more.
+Only after `bellman-matsya index` succeeds may you add, if you wish, a **personal Anthropic key**, an Anthropic API key of your own, so that the language-model calls of the jobs and questions you start are charged to your own Anthropic account in place of the service's account. The key is an optional addition to the Matsya token, never a substitute for it. Run `bellman-matsya configure --set-anthropic-key` and type the key at its prompt, which does not show it; the command refuses to save a key on a machine where no Matsya token is configured, and saves it in `~/.config/bellman-matsya/anthropic-key`, a file that only you can read. `bellman-matsya configure --clear-anthropic-key` removes it. The environment variable `BELLMAN_MATSYA_ANTHROPIC_KEY`, set from a private file, supplies a key without saving it and is used in place of a saved key. The client sends the key only with a job, a question or a reply that may start a job, and only to an HTTPS address or to a service on your own machine (`localhost`, `127.0.0.1` or `::1`). The address `http://45.55.225.169:8710` uses plain HTTP, so the client refuses to send a key there, and the service at that address does not yet use personal keys. Give the key to the client in your own terminal, never to an assistant in chat. `bellman-matsya` alone says which key the next job will use, and a command whose work runs under your key prints `Credential: your Anthropic API key`; [the command-line guide](docs/02-working-from-the-command-line.md) §1.1 gives the details.
 
 ## 3 Let your assistant work with Matsya
 
-You do not need to learn the commands. A coding assistant such as Claude Code runs them for you, and Matsya tells the assistant how: typed alone, `matsya` answers with where its guide is and how to read it. So instruct your assistant to ask Matsya how to read its instructions.
+You do not need to learn the commands. A coding assistant can run the installed client for you. The bare command `bellman-matsya` prints an introduction and points to its guide; it does not start a server. `bellman-matsya index` contacts the Bellman Matsya service.
 
-In Claude Code, open the folder that holds your model's description and type at its prompt:
+Open the folder that holds your model's description in your coding assistant, and give it this instruction:
 
-```
-Ask matsya how it works, read its instructions, and then use the matsya command for me.
-```
+> In this folder, first run `bellman-matsya` and confirm that it describes Project Bellman and Bellman-SYM. Then run `bellman-matsya docs --all` and read the installed guide. Run `bellman-matsya index` to check access to the Bellman service. Tell me whether these steps succeeded. If a step fails, stop and report the problem. Do not ask me to paste my token in chat, and do not submit a job until I ask.
 
-Claude Code runs `matsya`, which points it to the guide; it reads the guide with `matsya docs --all`; and it is then ready. From then on, say what you want in your own words.
+This instruction works for an existing installation too: the first-use message appears only when no configuration file exists. Once the assistant has completed these checks, say what you want in your own words.
 
 Every job names its **target**, the level of the declaration it returns: `stage`, one stage file, which states one decision problem; `period`, the stage files of one model period and the period file `period.yml` that joins them; `trellis`, the stage files, the period files and `trellis.yml`, which orders the periods in time up to the terminal period; or `recipe`, the files of a trellis together with a methods file for each stage whose solution method the source states (a stage without one is admitted), the calibration and settings files, and the recipe file `spec.yml` that names them for each stage. Name the target when you ask for a build. For example:
 
@@ -77,7 +60,7 @@ Every job names its **target**, the level of the declaration it returns: `stage`
 Build the model described in economics.md as a trellis.
 ```
 
-Claude Code runs `matsya job submit economics.md --target trellis`, follows the job to its end, and then runs `matsya job files <job> <new folder>`, which writes the files of the target, the model prose and `report.md` into a folder of yours; it reports the job's final state (a finished job is not necessarily a converged one) and shows you the report and, when the job reached the writing step, the files it wrote, to compare with the model you intended; a job that stopped earlier to ask for input leaves `report.md` and the record and no stage file.
+Claude Code runs `bellman-matsya job submit economics.md --target trellis`, follows the job to its end, and then runs `bellman-matsya job files <job> <new folder>`. The folder holds the available declaration files, `economics.md` containing the prose from which those files were written, and `report.md`. The report states whether the job converged and shows the prose judges' findings separately from the comparison of the elaborated semantic objects constructed from the declarations. A job that stopped before writing files still returns its report and record.
 
 Two things can then happen. If the job ended with questions, because the description left something necessary unsaid, the questions stand in the session; you answer them and the next job starts from your answer, at the same target:
 
@@ -85,7 +68,7 @@ Two things can then happen. If the job ended with questions, because the descrip
 Answer matsya-architect's first question: the gross return on assets is R, and assets cannot be negative.
 ```
 
-Claude Code runs `matsya session show <session>` to find the question's entry number, writes your answer to a file, runs `matsya session add <session> <file> --replies-to <entry number>`, which starts the next job, and follows that job with `matsya job wait <new job>`. A reply starts a job only when it answers a question of the latest job that is waiting for input.
+Claude Code runs `bellman-matsya session show <session>` to find the question's entry number, writes your answer to a file, runs `bellman-matsya session add <session> <file> --replies-to <entry number>`, which starts the next job, and follows that job with `bellman-matsya job wait <new job>`. A reply starts a job only when it answers a question of the latest job that is waiting for input.
 
 If instead the job ran its cycles and its report records what the two judges found, you ask about it:
 
@@ -93,16 +76,30 @@ If instead the job ran its cycles and its report records what the two judges fou
 What did the two judges disagree on in that job?
 ```
 
-Claude Code runs `matsya ask` in the session the job created and shows you the answer with its citations.
+Claude Code runs `bellman-matsya ask` in the session the job created and shows you the answer with its citations.
 
-The guide the assistant reads is installed with the command; it is also online at <https://econ-ark.github.io/bellman/matsya/user-guide/>.
+The guide the assistant reads is installed with the command; its files are also in [`docs/`](https://github.com/econ-ark/matsya/tree/main/docs) of the public Matsya repository. `bellman-matsya docs --online` reads the current pages from that directory. Those pages may describe a newer client than the one installed on your machine.
 
 ## 4 Or run the commands yourself
 
-Every command is also meant to be typed by hand. `matsya --help` lists them, and the user guide explains each with what it prints. The four you will use most are `matsya job submit model.md --target trellis`, which has the model described in the file built and checked at the target named, `matsya job wait <job>`, which follows that work to its end, `matsya job files <job> <new folder>`, which writes the files of the target, the model prose and the report into a folder of yours, and `matsya ask <session> "your question"`, which asks a question about a model in the session the first command created. `matsya job submit` refuses a job whose command names no target, and prints the four targets.
+Every command is also meant to be typed by hand. `bellman-matsya --help` lists them, and the user guide explains each with what it prints. The four you will use most are `bellman-matsya job submit model.md --target trellis`, which has the model described in the file built and checked at the target named, `bellman-matsya job wait <job>`, which follows that work to its end, `bellman-matsya job files <job> <new folder>`, which writes the files of the target, the model prose and the report into a folder of yours, and `bellman-matsya ask <session> "your question"`, which asks a question about a model in the session the first command created. `bellman-matsya job submit` refuses a job whose command names no target, and prints the four targets.
 
-A paper is submitted as its text, in a Markdown or LaTeX file, with the option `--paper`: `matsya job submit paper.md --paper --target stage` appends the paper to a new session as an entry of the kind `paper` and starts the job from that session; the job reads the session's text as a paper, and its questions stand in the session, as any other job's do. Without `--paper`, a file is a description. A PDF is refused before any request, with the sentence `A paper is sent as Markdown or LaTeX text; convert the PDF first.`, so convert it to Markdown or LaTeX before you submit it. The paper's text is sent to the language-model provider; ask the service's administrator before you submit a paper that may not leave your machine.
+A paper is submitted as its text, in a Markdown or LaTeX file, with the option `--paper`: `bellman-matsya job submit paper.md --paper --target stage` appends the paper to a new session as an entry of the kind `paper` and starts the job from that session; the job reads the session's text as a paper, and its questions stand in the session, as any other job's do. Without `--paper`, a file is a description. A PDF is refused before any request, with the sentence `A paper is sent as Markdown or LaTeX text; convert the PDF first.`, so convert it to Markdown or LaTeX before you submit it. The paper's text is sent to the language-model provider; ask the service's administrator before you submit a paper that may not leave your machine.
+
+## 5 Keep a model in a project folder
+
+A **project folder** is a folder for one model that remembers the model's session: your description in `economics.md`, the model's declaration as it stands in `declaration/`, with the stage files under `declaration/stages/<key>/<key>.bl`, and a small folder `.bellman-matsya/` that the command writes.
+
+The Bellman client does not read an earlier `.matsya/` folder or reuse its session automatically. Keep your authored `economics.md` and `declaration/`, and run the following command in the model folder to create its Bellman session:
+
+```
+bellman-matsya project init
+```
+
+The command creates a session named after the folder, appends `economics.md` to it as the first entry, and writes `.bellman-matsya/project.json`, which holds the session's identifier, and `.bellman-matsya/README.md`, a note on the folder and its commands. It also writes `AGENTS.md`, a paragraph that points a coding assistant to that note, unless the folder already has an `AGENTS.md`, in which case it leaves the file as it is and prints the paragraph for you to add.
+
+From then on you run four commands in the folder, and the first three find the session in `.bellman-matsya/project.json` themselves. `bellman-matsya project submit` appends `economics.md` to the session when you have changed it, and starts a job with the files of `declaration/` as its starting point, at the target those files imply, or the one `--target` names. `bellman-matsya project status` prints the session's jobs, each by its label, a line such as `household · stage · version 2 · job 3 · converged` that names the model, the target, the version of your text the job read, the job's number and its state, and each question awaiting your reply, with the exact command that answers it. `bellman-matsya project pull --replace` writes the files of the latest job that has ended with a record into `declaration/`, each replacing the file of the same name and the others left in place, together with the job's report as `report.md` and any model prose as `model-prose.md`; it never writes `economics.md`. An open writer's note goes to `.bellman-matsya/writer-note.md`, leaving your stage page in place. Without `--replace`, the command writes the job's files into a new folder, `bellman-matsya-output/job-<number>/`, and leaves `declaration/` as it is. `bellman-matsya ask <session> "your question"`, with the session's identifier that `bellman-matsya project status` prints, asks about the model. A coding assistant working in the folder reads `.bellman-matsya/README.md` and runs the same commands.
 
 ## Source and license
 
-The client is developed in the Bellman project's repository and published here; its version is the one in `pyproject.toml`, tagged at each release. This repository first held an earlier client of the previous Matsya service, whose last commit was `6b1bf86`, under the Apache 2.0 license retained in [LICENSE](LICENSE); the present code calls the current Matsya service's `/v1/` routes and no other service.
+The Bellman client source for installation is the [public Matsya repository](https://github.com/econ-ark/matsya), whose root is this package and which holds no other; the Bellman repository keeps the development copy in `packages/bellman-matsya-client/`. Its version is recorded in `pyproject.toml`, and its license is [Apache 2.0](LICENSE). It calls the Bellman service's `/v1/` routes.

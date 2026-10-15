@@ -13,7 +13,7 @@ import pytest
 
 CLIENT = Path(__file__).resolve().parents[1]
 DOCS = CLIENT / "docs"
-REPOSITORY = CLIENT.parents[2]
+REPOSITORY = CLIENT.parents[1]
 SOURCES = {
     "": REPOSITORY / "docs" / "matsya" / "user-guide",
     "dev-guide": REPOSITORY / "docs" / "matsya" / "dev-guide",
@@ -48,7 +48,7 @@ def _committed(source: Path) -> dict[str, bytes] | None:
 
 
 def test_the_pages_are_installed_with_the_package() -> None:
-    installed = importlib.resources.files("matsya") / "docs"
+    installed = importlib.resources.files("bellman_matsya") / "docs"
     names = sorted(entry.name for entry in installed.iterdir() if entry.name.endswith(".md"))
     assert names == sorted(path.name for path in DOCS.glob("*.md"))
     assert names, "the package carries no page"

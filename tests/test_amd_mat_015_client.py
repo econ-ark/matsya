@@ -1,12 +1,12 @@
 """The acceptance file of AMD-MAT-015 on the side of the client, against no
-service: the command `matsya docs` of the amendment's §2, which lists the
+service: the command `bellman-matsya docs` of the amendment's §2, which lists the
 pages of the user guide installed with the client, prints one page, every
 page or the folder that holds them, and refuses a page it does not hold;
 with `--online`, which reads a page or every page from the client's public
 repository through a stand-in for `urllib.request.urlopen`, so that no
 request is sent; and the parts of item 5 that need no project folder:
-`matsya` alone prints the orientation, with and without a saved Matsya
-token, and a command run with no configuration file and MATSYA_TOKEN unset
+`bellman-matsya` alone prints the orientation, with and without a saved Matsya
+token, and a command run with no configuration file and BELLMAN_MATSYA_TOKEN unset
 prints the two first-use lines before anything else, which no command
 prints once the configuration file exists. The expected pages are read from
 the client's folder `docs/`, so that a page added or renumbered (§3) leaves
@@ -21,15 +21,13 @@ import re
 import urllib.error
 from pathlib import Path
 
-import pytest
-
 from conftest import TOKEN
-from matsya import __version__, config
+from bellman_matsya import __version__, config
 
 DOCS = Path(__file__).resolve().parents[1] / "docs"
 FIRST_USE = (
-    "This is the first use of matsya on this machine.\n"
-    "A model working for the user reads the guide first: matsya docs --all\n"
+    "This is the first use of bellman-matsya on this machine.\n"
+    "An assistant working for the user reads the guide first: bellman-matsya docs --all\n"
 )
 ADDRESS = "https://service.example.invalid"
 # the folder of the guide's pages in the client's public repository
@@ -45,25 +43,9 @@ THREE_PARTS = (
 )
 
 
-def _no_request(*arguments: object, **options: object) -> None:
-    raise AssertionError("these tests send no request")
-
-
-@pytest.fixture
-def new_machine(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    """A machine on which the client was never used: a temporary home folder
-    with no configuration file, neither MATSYA_TOKEN nor MATSYA_SERVER set,
-    and no request possible. Returns the configuration file's path."""
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr(config, "CONFIG_DIR", home / ".config" / "matsya")
-    monkeypatch.setattr(config, "CONFIG_FILE", home / ".config" / "matsya" / "config.toml")
-    for variable in ("MATSYA_TOKEN", "MATSYA_SERVER"):
-        monkeypatch.delenv(variable, raising=False)
-    # the client's opener and `urlopen` both send through `OpenerDirector.open`
-    monkeypatch.setattr("urllib.request.OpenerDirector.open", _no_request)
-    return config.CONFIG_FILE
+# `new_machine`, a machine on which the client was never used and from which
+# no request can be sent, is a fixture of conftest.py, which the tests of
+# AMD-MAT-021 share
 
 
 def _pages() -> list[tuple[str, Path]]:
@@ -126,13 +108,13 @@ def test_item_1_docs_lists_prints_and_locates_the_installed_pages(new_machine, r
         assert run("docs", f"{name}.md") == (0, body + "\n", "")
     every_page = "\n".join(f"<!-- page: {name}.md -->\n{_body(path)}\n" for name, path in pages)
     assert run("docs", "--all") == (0, every_page, "")
-    installed = importlib.resources.files("matsya") / "docs"
+    installed = importlib.resources.files("bellman_matsya") / "docs"
     assert run("docs", "--path") == (0, f"{installed}\n", "")
     printed = Path(str(installed))
     assert {page.relative_to(printed): page.read_bytes() for page in printed.rglob("*.md")} == {
         page.relative_to(DOCS): page.read_bytes() for page in DOCS.rglob("*.md")
     }
-    # `matsya docs` needs no Matsya token: no first-use lines, no file written
+    # `bellman-matsya docs` needs no Matsya token: no first-use lines, no file written
     assert not new_machine.exists()
 
 
@@ -141,7 +123,7 @@ def test_a_page_the_guide_does_not_hold_or_a_page_with_all_or_path_is_refused(ne
     status, out, err = run("docs", "no-such-page")
     assert (status, out) == (2, "")
     assert err.endswith(
-        'matsya docs: error: argument page: no page of the user guide is named "no-such-page"; '
+        'bellman-matsya docs: error: argument page: no page of the user guide is named "no-such-page"; '
         f"the pages are {names}\n"
     )
     for arguments in (
@@ -153,7 +135,7 @@ def test_a_page_the_guide_does_not_hold_or_a_page_with_all_or_path_is_refused(ne
     ):
         status, out, err = run(*arguments)
         assert (status, out) == (2, "") and "not allowed with argument" in err, arguments
-    assert err.endswith("matsya docs: error: argument --online: not allowed with argument --path\n")
+    assert err.endswith("bellman-matsya docs: error: argument --online: not allowed with argument --path\n")
 
 
 def test_docs_online_reads_the_pages_as_the_public_repository_holds_them(
@@ -208,7 +190,7 @@ def test_docs_online_reads_the_pages_as_the_public_repository_holds_them(
         1,
         "",
         f"Error: the page {missing}.md of the online guide could not be read from "
-        f"{ONLINE}{missing}.md (HTTP 404 Not Found); without --online, matsya docs prints the "
+        f"{ONLINE}{missing}.md (HTTP 404 Not Found); without --online, bellman-matsya docs prints the "
         "installed guide.\n",
     )
 
@@ -221,10 +203,10 @@ def test_docs_online_reads_the_pages_as_the_public_repository_holds_them(
         1,
         "",
         f"Error: the page index.md of the online guide could not be read from {ONLINE}index.md "
-        "([Errno 61] Connection refused); without --online, matsya docs prints the installed "
+        "([Errno 61] Connection refused); without --online, bellman-matsya docs prints the installed "
         "guide.\n",
     )
-    # `matsya docs --online` needs no Matsya token: no first-use lines, no file written
+    # `bellman-matsya docs --online` needs no Matsya token: no first-use lines, no file written
     assert not new_machine.exists()
 
 
@@ -241,19 +223,24 @@ def test_item_5_matsya_alone_prints_the_orientation_with_and_without_a_saved_tok
     )
     assert lines[2].endswith(" It has three parts: " + THREE_PARTS)
     assert THREE_PARTS in (DOCS / "index.md").read_text(encoding="utf-8")
-    installed = importlib.resources.files("matsya") / "docs"
+    installed = importlib.resources.files("bellman_matsya") / "docs"
     assert lines[3:] == [
         "",
         f"The user guide is installed on this machine in the folder `{installed}`. The installed "
-        f"guide describes the commands of this client, version {__version__}. `matsya docs` lists "
-        "its pages, `matsya docs --all` prints the whole installed guide, which a model working "
-        "for the user reads first, and `matsya docs --all --online` prints the whole guide as it "
-        "stands today in the client's public repository. `pip install --upgrade "
-        "git+https://github.com/econ-ark/matsya` upgrades the client and its installed guide.",
+        f"guide describes the commands of this client, version {__version__}. `bellman-matsya docs` lists "
+        "its pages, `bellman-matsya docs --all` prints the whole installed guide, which an assistant working "
+        "for the user reads first, and `bellman-matsya docs --all --online` prints the current guide "
+        "from the public Matsya repository. `python -m pip install --force-reinstall "
+        "git+https://github.com/econ-ark/matsya.git` "
+        "updates the client and its installed guide.",
         "",
-        "No Matsya token is saved on this machine; `matsya configure` saves it.",
+        "No Matsya token is saved on this machine; `bellman-matsya configure` saves it.",
+        # the line on the personal Anthropic key that follows the Matsya
+        # token's line (AMD-MAT-021 §2.5)
+        "No personal Anthropic key is selected; new jobs and questions use the service's key, and a "
+        "reply that would continue a job run with a personal key is refused until one is selected.",
         "",
-        "`matsya --help` lists the commands.",
+        "`bellman-matsya --help` lists the commands.",
     ]
     # the orientation needs no Matsya token: no first-use lines, no file written
     assert not new_machine.exists()
@@ -262,56 +249,55 @@ def test_item_5_matsya_alone_prints_the_orientation_with_and_without_a_saved_tok
     status, out, err = run()
     assert (status, err) == (0, "")
     assert out.splitlines()[6] == f"A Matsya token is saved on this machine, in `{new_machine}`."
-    assert TOKEN not in out and "matsya configure" not in out
-    monkeypatch.setenv("MATSYA_TOKEN", TOKEN)
+    assert TOKEN not in out and "bellman-matsya configure" not in out
+    monkeypatch.setenv("BELLMAN_MATSYA_TOKEN", TOKEN)
     status, out, _ = run()
     assert out.splitlines()[6] == (
         f"A Matsya token is saved on this machine, in `{new_machine}`. The environment variable "
-        "`MATSYA_TOKEN` is set, and the commands use its value in place of a saved Matsya token."
+        "`BELLMAN_MATSYA_TOKEN` is set, and the commands use its value in place of a saved Matsya token."
     )
     assert TOKEN not in out
 
-    # `matsya --help` keeps the usage text
+    # `bellman-matsya --help` keeps the usage text
     status, out, err = run("--help")
     assert (status, err) == (0, "")
-    assert out.startswith("usage: matsya [-h] <command> ...\n") and "\nRead first:\n" in out
+    assert out.startswith("usage: bellman-matsya [-h] <command> ...\n") and "\nRead first:\n" in out
 
 
 def test_item_5_the_first_use_lines_come_first_until_the_configuration_file_exists(
     new_machine, run, monkeypatch, tmp_path
 ) -> None:
-    # with no configuration file and MATSYA_TOKEN unset, a command prints the
-    # two lines and then refuses with its present sentence
+    # With no token, the command prints the first-use lines before refusing.
     assert run("index") == (
         1,
         FIRST_USE,
-        "Error: No Matsya service address configured. Set MATSYA_SERVER to the address "
-        "supplied by Econ-ARK-admin, or run matsya configure.\n",
+        "Error: no Matsya token is configured. Run bellman-matsya configure, or set the environment "
+        "variable BELLMAN_MATSYA_TOKEN.\n",
     )
-    monkeypatch.setenv("MATSYA_SERVER", ADDRESS)
+    monkeypatch.setenv("BELLMAN_MATSYA_SERVER", ADDRESS)
     assert run("index") == (
         1,
         FIRST_USE,
-        "Error: no Matsya token is configured. Run matsya configure, or set the environment "
-        "variable MATSYA_TOKEN.\n",
+        "Error: no Matsya token is configured. Run bellman-matsya configure, or set the environment "
+        "variable BELLMAN_MATSYA_TOKEN.\n",
     )
     # configure prints them before its own lines, then asks and saves
-    answers = [TOKEN, ADDRESS]
+    answers = [TOKEN]
     monkeypatch.setattr("builtins.input", lambda prompt="": answers.pop(0))
     status, out, err = run("configure")
     assert (status, err) == (0, "")
-    assert out.startswith(FIRST_USE + "Matsya: save your Matsya token and the service address\n")
+    assert out.startswith(FIRST_USE + "Matsya: save your Matsya token\n")
     assert new_machine.exists() and TOKEN not in out
 
     # once the configuration file exists, no command prints them
-    answers += [TOKEN, ADDRESS]
+    answers += [TOKEN]
     status, out, _ = run("configure")
-    assert status == 0 and out.startswith("Matsya: save your Matsya token and the service address\n")
+    assert status == 0 and out.startswith("Matsya: save your Matsya token\n")
     absent = tmp_path / "absent.md"
     status, out, err = run("job", "submit", str(absent), "--target", "stage")
     assert (status, out) == (1, "") and err.startswith(f"Error: cannot read {absent}")
-    # nor does a command run with MATSYA_TOKEN set and no configuration file
+    # nor does a command run with BELLMAN_MATSYA_TOKEN set and no configuration file
     new_machine.unlink()
-    monkeypatch.setenv("MATSYA_TOKEN", TOKEN)
+    monkeypatch.setenv("BELLMAN_MATSYA_TOKEN", TOKEN)
     status, out, err = run("job", "submit", str(absent), "--target", "stage")
     assert (status, out) == (1, "") and err.startswith(f"Error: cannot read {absent}")

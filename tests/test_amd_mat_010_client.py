@@ -16,11 +16,13 @@ from __future__ import annotations
 import json
 import os
 import re
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
 
-import matsya
+import bellman_matsya
+from bellman_matsya import cli
 from conftest import (
     FIRST_STAGE,
     METHODS,
@@ -34,9 +36,10 @@ from conftest import (
     ROUND_TRIP_STAGE,
     SHOCK,
     STAGE,
+    TOKEN,
     products_of,
 )
-from matsya.client import MatsyaClient
+from bellman_matsya.client import MatsyaClient
 
 TIME = re.compile(r"^\d\d:\d\d:\d\d  ")
 MODEL = "Household with firms"
@@ -51,6 +54,7 @@ Household with firms · stage · version 1 · job 1 · not_converged (<job>), se
 ## Status
 
 The job ended not_converged, with the reason cycle_limit_reached.
+The returned declaration files are provisional; the job did not establish convergence.
 
 ## Cycles and version
 
@@ -300,6 +304,45 @@ def test_item_3_the_model_folder_with_and_without_the_iterates(stand_in, run, tm
         }
 
 
+def test_latest_available_writing_survives_an_empty_final_cycle(
+    monkeypatch, tmp_path
+) -> None:
+    """A non-converged job returns its last completed writing and reports
+    which cycle produced it, while the comparison remains the final cycle's.
+    An older record without `available_writing` still uses `last_cycle`."""
+    client = MatsyaClient(TOKEN, "http://127.0.0.1:1")
+    record = products_of(RECORDS["not_converged"])
+    record["last_cycle"]["files"] = None
+    record["available_writing"] = {"cycle": 1, "files": {"example.bl": FIRST_STAGE}}
+    job = {
+        "id": "a" * 32,
+        "state": "not_converged",
+        "label": {"text": "Household with firms · stage · not_converged"},
+        "updated_at": "2026-10-11T00:00:00+00:00",
+        "result": record,
+    }
+    monkeypatch.setattr(client, "job", lambda job_id, view="products": job)
+
+    folder = tmp_path / "available"
+    client.job_files(job["id"], folder)
+    assert (folder / "declaration/stages/example/example.bl").read_text(encoding="utf-8") == FIRST_STAGE
+    assert (folder / "economics.md").exists()
+    report = (folder / "report.md").read_text(encoding="utf-8")
+    assert "The returned declaration files are provisional" in report
+    assert "The declaration files come from cycle 1; the final cycle produced no files." in report
+    assert "The round-trip stage files do not equal the written ones." in report
+    assert "Available provisional files from cycle 1: example.bl" in cli._job_lines(job)
+
+    legacy = deepcopy(job)
+    legacy["result"].pop("available_writing")
+    legacy["result"]["last_cycle"]["files"] = {"example.bl": STAGE}
+    monkeypatch.setattr(client, "job", lambda job_id, view="products": legacy)
+    older_folder = tmp_path / "older"
+    client.job_files(legacy["id"], older_folder)
+    assert (older_folder / "declaration/stages/example/example.bl").read_text(encoding="utf-8") == STAGE
+    assert "Files of the last cycle: example.bl" in cli._job_lines(legacy)
+
+
 def test_item_4_the_report(stand_in, run, tmp_path) -> None:
     """The report holds the headings of §4 in order; with judges that
     disagree, one subsection per judge with the headings on which a reading
@@ -321,7 +364,7 @@ def test_item_4_the_report(stand_in, run, tmp_path) -> None:
         "report.md",
     ]
     held = json.loads((folder / "record.json").read_text(encoding="utf-8"))
-    assert matsya.report_text(held) == report
+    assert bellman_matsya.report_text(held) == report
     for text in (report, REPORT):
         assert [line for line in text.splitlines() if line.startswith("## ")] == [
             "## The job",
@@ -338,14 +381,14 @@ def test_item_4_the_report(stand_in, run, tmp_path) -> None:
     assert out.splitlines() == [
         f"{MODEL} · stage · version 1 · job 1 · converged ({job_id}), session {session_id}",
         "The job ended converged, with the reason source_agreement_and_semantic_fixed_point.",
-        "Files of the last cycle: example.bl, note.md",
-        f"Write the model folder and its report with: matsya job files {job_id} <folder>",
+        "Available files from cycle 2: example.bl, note.md",
+        f"Write the model folder and its report with: bellman-matsya job files {job_id} <folder>",
     ]
     assert run("job", "status", job_id)[1] == out
 
     # a label given to report_text replaces the job's own
     label = {**held["label"], "text": "a label given"}
-    assert matsya.report_text(held, label).splitlines()[4] == f"a label given ({job_id}), session {session_id}"
+    assert bellman_matsya.report_text(held, label).splitlines()[4] == f"a label given ({job_id}), session {session_id}"
 
 
 def test_item_5_a_papers_job_and_a_job_with_questions(stand_in, run, tmp_path) -> None:
@@ -421,7 +464,17 @@ def test_item_5_a_papers_job_and_a_job_with_questions(stand_in, run, tmp_path) -
     assert (
         "## The writer's note\n\n"
         "The record marks the writer's note as unresolved, and the products hold no text of it.\n"
-    ) in matsya.report_text(held)
+    ) in bellman_matsya.report_text(held)
+
+    # A failed advisory judge is unavailable, not a judgment that the texts disagree.
+    held["result"]["paper_source_check"] = {
+        "agrees": None,
+        "reports": [],
+        "unavailable": {"reason": "provider_error"},
+    }
+    rendered = bellman_matsya.report_text(held)
+    assert "The prose-source-judge could not complete its report (`provider_error`)." in rendered
+    assert "The record marks the prose-source-judge as disagreeing" not in rendered
 
 
 def test_the_files_of_two_stages_are_placed_by_name_and_a_name_outside_is_refused(stand_in, run, tmp_path) -> None:
@@ -469,7 +522,7 @@ def test_the_files_of_two_stages_are_placed_by_name_and_a_name_outside_is_refuse
     status, out, err = run("job", "files", job_id, str(folder))
     assert (status, out) == (1, "")
     assert err == (
-        f"Error: The record of job {job_id} names a file '../outside.bl' in the last cycle's "
+        f"Error: The record of job {job_id} names a file '../outside.bl' in the available "
         "writing that the client does not write: a name must be a plain name, with no folder part "
         "and not beginning with a dot, or calibration/<file>, settings/<file> or "
         "stages/<key>/methods.yml.\n"
@@ -523,13 +576,13 @@ def test_a_symbolic_link_put_at_a_files_name_after_the_check_is_refused(
     outside.write_text("mine\n", encoding="utf-8")
     folder = tmp_path / "proposed"
     folder.mkdir()
-    checked = matsya.client._check_targets
+    checked = bellman_matsya.client._check_targets
 
     def check_then_link(within: Path, paths: list[str]) -> None:
         checked(within, paths)
         (folder / "report.md").symlink_to(outside)
 
-    monkeypatch.setattr("matsya.client._check_targets", check_then_link)
+    monkeypatch.setattr("bellman_matsya.client._check_targets", check_then_link)
     status, out, err = run("job", "files", job_id, str(folder))
     assert (status, out) == (1, "")
     assert err == (
@@ -545,4 +598,9 @@ def test_the_stand_in_reduces_each_record_as_the_service_does() -> None:
     read what the service returns."""
     processor = pytest.importorskip("matsya_service.processor")
     for name, record in RECORDS.items():
-        assert products_of(record) == processor.products_view(record), name
+        expected = products_of(record)
+        actual = processor.products_view(record)
+        # Older services omit the optional unfinished-writing field.
+        if "available_writing" not in actual:
+            expected.pop("available_writing", None)
+        assert expected == actual, name

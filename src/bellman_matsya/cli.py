@@ -203,7 +203,7 @@ ABOUT = (
 # the orientation prints (AMD-MAT-015 §2)
 UPGRADE = (
     "python -m pip install --force-reinstall "
-    "'git+https://github.com/econ-ark/matsya.git#subdirectory=bellman-matsya-client'"
+    "git+https://github.com/econ-ark/matsya.git"
 )
 # the two lines a command prints first at the first use of the client on a
 # machine (AMD-MAT-015 §2)

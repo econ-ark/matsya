@@ -1,12 +1,12 @@
 """The acceptance file of AMD-MAT-011 on the side of the client: items 5 and
-6 of the amendment's §6. Against the stand-in of the service: `matsya job
+6 of the amendment's §6. Against the stand-in of the service: `bellman-matsya job
 submit` refuses a job whose command names no target, or another word, with
 exit status 2 and the four words, and `start_job` and `submit_job` refuse
 it before any request; the request carries the target given, from a file
 kept in a session, from a session, from a file with no session and from a
 paper; the label the commands print names the target as the service gives
 it, a job of no session's label being its target and its state; and the
-folder `matsya job files` writes holds the files of the target, its report
+folder `bellman-matsya job files` writes holds the files of the target, its report
 and front matter naming the target. Against the service of the test
 configuration, a job of no session submitted with `--target stage`, whose
 label, record and report name the target. The client's words for the four
@@ -21,9 +21,9 @@ from pathlib import Path
 
 import pytest
 
-import matsya
+import bellman_matsya
 from conftest import PAPER, RECIPE_FILES, TARGET_REFUSAL, TARGETS, TWO_STAGES
-from matsya.client import MatsyaClient
+from bellman_matsya.client import MatsyaClient
 
 CLIENT = Path(__file__).resolve().parents[1]
 TIME = re.compile(r"^\d\d:\d\d:\d\d  ")
@@ -73,15 +73,15 @@ def test_item_5_job_submit_without_a_target_is_refused_before_any_request(stand_
     with pytest.raises(TypeError, match="target"):
         client.submit_job(session="0" * 32)
     with pytest.raises(TypeError, match="target"):
-        matsya.start_job(description)
+        bellman_matsya.start_job(description)
     for word in ("model", "Stage", None):
         refusal = f"^{TARGET_REFUSAL}, not {re.escape(repr(word))}\\.$"
         with pytest.raises(ValueError, match=refusal):
             client.submit_job(source_text="A household saves.", target=word)
         with pytest.raises(ValueError, match=refusal):
-            matsya.submit_job(session="0" * 32, target=word)
+            bellman_matsya.submit_job(session="0" * 32, target=word)
         with pytest.raises(ValueError, match=refusal):
-            matsya.start_job(description, target=word)
+            bellman_matsya.start_job(description, target=word)
         with pytest.raises(ValueError, match=refusal):
             client.start_job(tmp_path / "absent.md", name="a household", target=word)
     assert stand_in.requests == [] and stand_in.sessions == {}
@@ -110,7 +110,7 @@ def test_item_5_the_request_carries_the_target_and_every_label_names_it(stand_in
     reply = tmp_path / "reply.md"
     reply.write_text("Income y is lognormal with mean one.\n", encoding="utf-8")
     status, out, _ = run("session", "add", session_id, str(reply), "--replies-to", "2")
-    second = _identifier(r"^Follow it with: matsya job wait ([0-9a-f]{32})$", out)
+    second = _identifier(r"^Follow it with: bellman-matsya job wait ([0-9a-f]{32})$", out)
     status, out, _ = run("job", "wait", second, "--interval", "0")
     assert _final(out)[0] == f"model · trellis · version 3 · job 2 · converged ({second}), session {session_id}"
     status, out, _ = run("session", "show", session_id)
@@ -138,11 +138,11 @@ def test_item_5_the_request_carries_the_target_and_every_label_names_it(stand_in
     paper.write_text(PAPER, encoding="utf-8")
     status, _, _ = run("job", "submit", str(paper), "--paper", "--no-session", "--target", "recipe")
     assert status == 0 and stand_in.requests[-1]["body"]["target"] == "recipe"
-    started = matsya.start_job(description, name="a household", target="recipe")
+    started = bellman_matsya.start_job(description, name="a household", target="recipe")
     assert stand_in.requests[-1]["body"] == {"session": started["session"]["id"], "target": "recipe"}
-    submitted = matsya.submit_job(session=session_id, target="stage")
+    submitted = bellman_matsya.submit_job(session=session_id, target="stage")
     assert stand_in.requests[-1]["body"] == {"session": session_id, "target": "stage"}
-    assert matsya.job(submitted["id"])["label"]["text"] == "model · stage · job 3 · queued"
+    assert bellman_matsya.job(submitted["id"])["label"]["text"] == "model · stage · job 3 · queued"
 
 
 def test_item_5_the_folder_and_the_report_name_the_target(stand_in, run, tmp_path) -> None:
@@ -196,7 +196,7 @@ def test_item_5_against_the_service_a_job_names_its_target(service, run, tmp_pat
     assert status == 0
     assert _final(out)[:2] == [
         f"stage · converged ({job_id}), no session",
-        "The job ended converged, with the reason source_agreement_and_semantic_fixed_point.",
+        f"The job ended converged, with the reason {bellman_matsya.job(job_id)['result']['reason']}.",
     ]
     status, out, _ = run("job", "status", job_id, "--json")
     held = json.loads(out)
@@ -217,7 +217,7 @@ def test_item_6_the_former_name_of_the_formulation_appears_nowhere_in_the_client
     under `docs/` are compared with their source by `test_docs.py`."""
     former = "target" + "_formulation"
     paths = [
-        *sorted((CLIENT / "src" / "matsya").glob("*.py")),
+        *sorted((CLIENT / "src" / "bellman_matsya").glob("*.py")),
         *sorted((CLIENT / "tests").glob("*.py")),
         CLIENT / "README.md",
         CLIENT / "pyproject.toml",
@@ -231,7 +231,7 @@ def test_the_client_and_the_stand_in_name_the_services_four_targets() -> None:
     with the service's sentence, `TARGET_REFUSAL`."""
     meaning = pytest.importorskip("matsya_service.meaning")
     processor = pytest.importorskip("matsya_service.processor")
-    assert matsya.TARGETS == TARGETS == meaning.TARGETS
+    assert bellman_matsya.TARGETS == TARGETS == meaning.TARGETS
     assert TARGET_REFUSAL == processor.TARGET_REFUSAL
     with pytest.raises(ValueError) as refused:
         MatsyaClient("", "http://127.0.0.1:9").submit_job(source_text="A household saves.", target="model")

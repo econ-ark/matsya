@@ -18,16 +18,16 @@ topic: [matsya]
 
 ## 1 Installing and setting up
 
-The package `bellman-matsya-client` installs the command `bellman-matsya` and the Python module `bellman_matsya`; it needs Python 3.10 or newer. Install it from the `bellman-matsya-client/` subdirectory of the public [Matsya repository](https://github.com/econ-ark/matsya). This needs Git, but no Bellman checkout on your computer:
+The package `bellman-matsya-client` installs the command `bellman-matsya` and the Python module `bellman_matsya`; it needs Python 3.10 or newer. Install it from the public [Matsya repository](https://github.com/econ-ark/matsya), whose root is the package. This needs Git, but no Bellman checkout on your computer:
 
 ```sh
-python -m pip install 'git+https://github.com/econ-ark/matsya.git#subdirectory=bellman-matsya-client'
+python -m pip install git+https://github.com/econ-ark/matsya.git
 bellman-matsya --help
 ```
 
-To update the client, run `python -m pip install --force-reinstall 'git+https://github.com/econ-ark/matsya.git#subdirectory=bellman-matsya-client'`. The client installation does not install or start the service.
+To update the client, run `python -m pip install --force-reinstall git+https://github.com/econ-ark/matsya.git`. The client installation does not install or start the service.
 
-The public Matsya repository retains an earlier Bellman client package, `econ-ark-matsya`, at its root. It installs the different command `matsya`; the current Bellman installation does not remove it. If you no longer use it, remove it from its Python environment with `python -m pip uninstall econ-ark-matsya`, or use `pipx uninstall econ-ark-matsya` for a pipx installation. To find command installations, use `type -a matsya bellman-matsya` on macOS or Linux, or `Get-Command matsya,bellman-matsya -All` in PowerShell. Use `bellman-matsya` for Bellman work.
+The public Matsya repository holds this client alone: the earlier package `econ-ark-matsya`, which installed the different command `matsya`, was removed from it on 16 October 2026, and the current Bellman installation does not remove a copy already installed on your computer. If you no longer use it, remove it from its Python environment with `python -m pip uninstall econ-ark-matsya`, or use `pipx uninstall econ-ark-matsya` for a pipx installation. To find command installations, use `type -a matsya bellman-matsya` on macOS or Linux, or `Get-Command matsya,bellman-matsya -All` in PowerShell. Use `bellman-matsya` for Bellman work.
 
 The service's administrator gives you a new token beginning `msy_`. The client uses the Bellman service at `http://45.55.225.169:8710` automatically. This preliminary HTTP connection sends the token and your requests without encryption. Keep the token private. Run:
 

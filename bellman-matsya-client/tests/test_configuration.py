@@ -30,7 +30,11 @@ class ClientConfigurationTests(unittest.TestCase):
         self.assertEqual(config.load_config()["server"], config.DEFAULT_SERVER_URL)
         with patch("bellman_matsya.cli.MatsyaClient") as client:
             cli._build_client()
-        client.assert_called_once_with(token="msy_test", server_url=config.DEFAULT_SERVER_URL)
+        # with no personal Anthropic key selected, the client holds none
+        # (AMD-MAT-021 §2.2)
+        client.assert_called_once_with(
+            token="msy_test", server_url=config.DEFAULT_SERVER_URL, anthropic_api_key=None
+        )
 
     def test_environment_overrides_saved_address_and_token(self):
         saved = config.save_config("saved-test-token", "https://saved.example.invalid/")
@@ -92,7 +96,9 @@ class ClientConfigurationTests(unittest.TestCase):
     def test_methods_call_the_routes_of_spec_0_3(self):
         client = MatsyaClient("msy_test", "https://service.example.invalid")
 
-        def answer(method, path, body=None):
+        # `options` holds `personal_key`, which marks the three requests that
+        # carry a personal Anthropic key (AMD-MAT-021 §2.3)
+        def answer(method, path, body=None, **options):
             return {"id": "t1", "state": "finished" if "/turns/" in path else "converged"}
 
         with patch.object(client, "_request", side_effect=answer) as request:

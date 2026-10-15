@@ -22,9 +22,10 @@ are the client's own (`new_session`, `add_entry`, `submit_job`, `job` and
 file through a symbolic link. A project's requests go only to the service
 address the client is configured with, which must be the address the
 folder records, so that the Matsya token is never sent to an address read
-from a folder. `ProjectRefusal` is the client's refusal of a command it
-does not carry out, stated in one sentence; the command exits with status
-2.
+from a folder. A personal Anthropic key the client holds is sent only with
+the job request of `submit` (AMD-MAT-021 §2.3). `ProjectRefusal` is the
+client's refusal of a command it does not carry out, stated in one
+sentence; the command exits with status 2.
 """
 
 from __future__ import annotations
@@ -473,9 +474,12 @@ def init(client: MatsyaClient, folder: str | Path = ".") -> dict[str, Any]:
         try:
             entry = client.add_entry(held["session"], text, kind="user")["entry"]
         except MatsyaError as error:
+            # the session's identifier is the service's (AMD-MAT-021 §2.5)
             error.args = (
-                f"{error} The folder is a project of session {held['session']}, which holds no "
-                "entry; bellman-matsya project submit appends economics.md to it.",
+                client._hidden(
+                    f"{error} The folder is a project of session {held['session']}, which holds "
+                    "no entry; bellman-matsya project submit appends economics.md to it."
+                ),
             )
             raise
         held["economics_sha256"] = digest
@@ -510,7 +514,11 @@ def submit(
     the job at `target`, by default the folder's target (`folder_target`),
     with `max_cycles` when given and under the published configuration
     `configuration_id` when given, else the default (AMD-MAT-020 §3). The
-    job is then read once, for its label.
+    job is then read once, for its label. A personal Anthropic key the
+    client holds is sent with the job's request alone; at an address that
+    fails `key_destination_allowed` the submission raises `MatsyaError`
+    before its first request, so that no entry of `economics.md` is
+    appended and no new digest is recorded (AMD-MAT-021 §2.4).
 
     Returns `{"folder", "project", "economics", "entry", "target",
     "target_named", "starting_declaration", "left_out", "job"}`: the
@@ -525,6 +533,7 @@ def submit(
     _check_configuration_id(configuration_id)
     held = read_project(folder)
     check_server(client, held)
+    client.check_key_destination()
     text, digest = read_economics(folder)
     files, left_out = declaration_files(folder)
     chosen = folder_target(files) if target is None else target

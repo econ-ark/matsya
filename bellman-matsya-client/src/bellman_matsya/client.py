@@ -21,17 +21,37 @@ configuration by its ID, `configuration_id`, and takes the service's
 default otherwise; `export_job` saves a job's full answer as `job.json`;
 `publish_configuration` sends a checked configuration folder as a ZIP
 archive and `set_default_configuration` changes the default, both for an
-administrator (AMD-MAT-020 §§2–3). The module uses the standard library
-alone.
+administrator (AMD-MAT-020 §§2–3).
+
+A client may also hold a personal Anthropic key, `anthropic_api_key`, in
+addition to the Matsya token and never in its place (AMD-MAT-021 §2). It
+sends the key in the header `ANTHROPIC_KEY_HEADER` with exactly three
+requests, those that can start language-model work: a job submission, a
+conversation turn, and a `user` entry that replies to an earlier entry,
+which may continue a job. It sends the key only over HTTPS or to a literal
+loopback host (`key_destination_allowed`), and refuses such work before its
+first request at any other address, unless the environment holds
+BELLMAN_MATSYA_ANTHROPIC_KEY_OVER_HTTP=accept (`key_over_http_accepted`,
+D-021-4), the operator's testing override. Its requests verify HTTPS certificates
+and print no debugging output, whatever the calling process has set; a
+request to an `http` address with a loopback host, or to any `http` address
+under the override, passes through no proxy;
+and a redirect moves neither secret to another scheme, host or port. No
+message of the client shows the Matsya token or the key. The module uses
+the standard library alone.
 """
 
 from __future__ import annotations
 
 import copy
+import http.client
 import io
 import json
 import os
 import re
+import shlex
+import ssl
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -40,6 +60,8 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
+
+from bellman_matsya.config import check_anthropic_key
 
 # the seconds one request may take: every route answers at once, since a job
 # or a turn runs on the service after its route has answered
@@ -125,6 +147,43 @@ REPORT_HEADINGS = (
 REPORT_TITLE = "Report of the job"
 # the fixed sentence of the report when both judges agree on every heading
 JUDGES_AGREE = "The judges agree on every heading."
+# the header that carries a personal Anthropic key, sent only with a job
+# submission, a conversation turn and a `user` entry that names `replies_to`
+# (AMD-MAT-021 §2.3); urllib stores it as `Bellman-matsya-anthropic-key`,
+# so that header names are compared in lower case
+ANTHROPIC_KEY_HEADER = "Bellman-Matsya-Anthropic-Key"
+# the request headers that carry a secret, in lower case: the Matsya token
+# and the personal key, which a redirect may move to no other origin
+# (AMD-MAT-021 §2.4)
+CREDENTIAL_HEADERS = frozenset({"authorization", ANTHROPIC_KEY_HEADER.lower()})
+# the hosts of an `http` address to which a personal key may be sent, as
+# `urllib.parse.urlsplit(address).hostname` gives them, in lower case and
+# without IPv6 brackets; they are compared literally and no name is resolved
+# (AMD-MAT-021 §2.4)
+LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "::1")
+
+# AMD-MAT-021 §2.4, D-021-4: the operator's testing override, under which a
+# personal key is sent to a plain-HTTP address the client would otherwise refuse
+KEY_OVER_HTTP_VARIABLE = "BELLMAN_MATSYA_ANTHROPIC_KEY_OVER_HTTP"
+KEY_OVER_HTTP_WARNING = (
+    "Warning: BELLMAN_MATSYA_ANTHROPIC_KEY_OVER_HTTP=accept is set, so the personal Anthropic "
+    "key is sent unencrypted to {address}."
+)
+# what replaces each secret in a message the client composes (AMD-MAT-021
+# §2.5)
+TOKEN_MASK = "<Matsya token>"
+KEY_MASK = "<Anthropic API key>"
+# the service's refusal of a reply that would continue a job run with a
+# personal key and that carries none (AMD-MAT-021 §3.3), and the sentence
+# the client adds to it, which says how a key is supplied (§2.5)
+REPLY_NEEDS_KEY = (
+    "The job awaiting this reply ran under a personal Anthropic key; send the reply with a "
+    "personal Anthropic key"
+)
+KEY_REMEDY = (
+    "Supply one with bellman-matsya configure --set-anthropic-key, BELLMAN_MATSYA_ANTHROPIC_KEY, "
+    "or MatsyaClient(..., anthropic_api_key=...)."
+)
 # the two judges of a job: the record's entry holding each one's reports,
 # its name and what it compares (the terminology of 9 October 2026)
 JUDGES = (
@@ -209,27 +268,109 @@ def _origin(url: str) -> str:
 
 class _SameHostRedirects(urllib.request.HTTPRedirectHandler):
     """urllib's handler of redirects, which copies a request's headers, the
-    `Authorization` header among them, to the redirected request; a request
-    that carries the Matsya token is redirected only to its own scheme, host
-    and port, and a redirect elsewhere raises `MatsyaError` before any
-    request is sent there. `hidden` replaces the Matsya token in the
-    message."""
+    `Authorization` header and the personal-key header among them, to the
+    redirected request. A request that carries the Matsya token or the
+    personal Anthropic key, its header names compared without regard to
+    case, is redirected only to its own scheme, host and port; a redirect
+    elsewhere, an HTTPS request to HTTP among them, raises `MatsyaError`
+    before any request is sent there (AMD-MAT-021 §2.4). `hidden` replaces
+    the two secrets in the message."""
 
     def __init__(self, hidden: Callable[[str], str]) -> None:
         self.hidden = hidden
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         here, there = _origin(req.full_url), _origin(newurl)
-        if req.has_header("Authorization") and there != here:
+        carried = {name.lower() for name, _ in req.header_items()}
+        if carried & CREDENTIAL_HEADERS and there != here:
             fp.close()
+            secrets = (
+                "the Matsya token and the personal Anthropic key are"
+                if ANTHROPIC_KEY_HEADER.lower() in carried
+                else "the Matsya token is"
+            )
             raise MatsyaError(
                 self.hidden(
                     f"The Matsya service at {here} redirected the request to {there}; the "
                     "client follows a redirect only to the same scheme, host and port, so that "
-                    "the Matsya token is sent nowhere else."
+                    f"{secrets} sent nowhere else."
                 )
             )
         return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _scheme_and_host(address: str) -> tuple[str, str | None]:
+    """The scheme of an address and its host as `urllib.parse.urlsplit`
+    gives it, in lower case and without IPv6 brackets; an address urllib
+    cannot read has neither."""
+    try:
+        parts = urllib.parse.urlsplit(address)
+        return parts.scheme.lower(), parts.hostname
+    except ValueError:
+        return "", None
+
+
+def key_destination_allowed(address: str) -> bool:
+    """Whether a personal Anthropic key may be sent to the service at
+    `address` (AMD-MAT-021 §2.4): an `https` address, or an `http` address
+    whose host is literally `localhost`, `127.0.0.1` or `::1`, the local
+    service or the local end of an encrypted tunnel. No name is resolved,
+    so another spelling of a loopback address, such as `127.1`,
+    `localhost.` or `127.0.0.2`, is refused."""
+    scheme, host = _scheme_and_host(address)
+    return scheme == "https" or (scheme == "http" and host in LOOPBACK_HOSTS)
+
+
+def key_over_http_accepted() -> bool:
+    """Whether the environment variable BELLMAN_MATSYA_ANTHROPIC_KEY_OVER_HTTP
+    holds exactly `accept` (AMD-MAT-021 §2.4, D-021-4): the operator's
+    testing override. `MatsyaClient` reads it once, at construction: its
+    `check_key_destination` then raises nothing, so that the caller sends a
+    personal key to an address that fails `key_destination_allowed`, and
+    prints `KEY_OVER_HTTP_WARNING` once per client, in place of refusing, and
+    its opener passes the request through no proxy. The command's orientation
+    and `configure --set-anthropic-key` read it when they print. Any other
+    value, or none, leaves the refusal in force."""
+    return os.environ.get(KEY_OVER_HTTP_VARIABLE) == "accept"
+
+
+def _key_destination_refusal(address: str) -> str:
+    """The sentence with which the client refuses to send a personal key to
+    an address that fails `key_destination_allowed` (AMD-MAT-021 §2.4)."""
+    return (
+        "A personal Anthropic key is sent only over HTTPS or to localhost, 127.0.0.1 or ::1, "
+        f"and the service address is {address}; use an HTTPS address, or stop selecting the "
+        "key: unset BELLMAN_MATSYA_ANTHROPIC_KEY, run bellman-matsya configure "
+        "--clear-anthropic-key, or omit anthropic_api_key."
+    )
+
+
+def _build_opener(
+    server_url: str, hidden: Callable[[str], str], *, key_over_http: bool = False
+) -> urllib.request.OpenerDirector:
+    """The opener of a client's requests, built from explicit handlers
+    (AMD-MAT-021 §2.4): HTTPS through a context of
+    `ssl.create_default_context()`, which requires a valid certificate for
+    the host (`verify_mode` `CERT_REQUIRED`, `check_hostname` true), and HTTP
+    and HTTPS at debug level 0, so that neither holds whatever the calling
+    process has given to `ssl._create_default_https_context` or
+    `http.client.HTTPConnection.debuglevel`; the same-origin redirect
+    handler; and, for an `http` address whose host is a loopback host, and
+    for any `http` address when `key_over_http` is true, which `MatsyaClient`
+    sets from `key_over_http_accepted()` at construction (D-021-4),
+    `ProxyHandler({})`, so that no proxy named in the environment or in the
+    system settings receives any request and a request carrying a key sent
+    unencrypted goes to the service address alone. An HTTPS request may pass
+    through a proxy, which receives only the encrypted connection."""
+    handlers: list[urllib.request.BaseHandler] = [
+        urllib.request.HTTPSHandler(context=ssl.create_default_context(), debuglevel=0),
+        urllib.request.HTTPHandler(debuglevel=0),
+        _SameHostRedirects(hidden),
+    ]
+    scheme, host = _scheme_and_host(server_url)
+    if scheme == "http" and (host in LOOPBACK_HOSTS or key_over_http):
+        handlers.append(urllib.request.ProxyHandler({}))
+    return urllib.request.build_opener(*handlers)
 
 
 def _segment(value: str) -> str:
@@ -323,6 +464,15 @@ def _check_cluster(model_key: object, source_cluster: object) -> None:
     lowercase identifiers is sent together or not at all (AMD-MAT-020 §4)."""
     if (model_key is None) != (source_cluster is None):
         raise ValueError("model_key and source_cluster are given together or not at all.")
+
+
+def _check_formulation(formulation: object) -> None:
+    """Refuse a blank, non-text or overlong formulation before a session
+    receives an entry. A valid value is sent without changing its text."""
+    if formulation is not None and (
+        not isinstance(formulation, str) or not formulation.strip() or len(formulation) > 500
+    ):
+        raise ValueError("formulation must be a nonempty description of at most 500 characters.")
 
 
 def configuration_archive(folder: str | Path) -> bytes:
@@ -1171,27 +1321,95 @@ class MatsyaClient:
         refuses.
     server_url : str
         The service's address, without a route.
+    anthropic_api_key : str, optional
+        A personal Anthropic API key, written by its name, whose Anthropic
+        account is charged for the language-model calls of the jobs, turns
+        and replies the client starts (AMD-MAT-021 §2.2). Left at `None`,
+        the service's own key is used; the constructor reads neither the
+        environment nor the key file that the command line reads. The key
+        is kept without its surrounding whitespace; one that is then empty
+        or holds a character other than the visible ASCII characters `!` to
+        `~` raises `ValueError` with the sentence `The personal Anthropic
+        key is empty or contains a space, a line break or a character
+        outside printable ASCII`, before any request.
 
     Every method returns the service's JSON answer, except `job_files`,
     which returns the paths it wrote. `last_text` holds the text of the
     service's latest answer as it arrived, which the command prints with
-    ``--json``. No message of the client shows the Matsya token.
+    ``--json``. A held key is sent only with `submit_job`, `start_job`'s
+    job request, `ask`'s turn request and `add_entry` of a `user` entry
+    that names `replies_to`, and those calls are refused before their first
+    request at an address that fails `key_destination_allowed`
+    (`check_key_destination`), unless `key_over_http_accepted()` was true
+    when the client was constructed, the operator's testing override
+    (D-021-4); the answers of a job and a turn report the
+    credential the service used as `credential_source`, `client` or
+    `service`. No message of the client shows the Matsya token or the key,
+    and its `repr` shows only the service address.
     """
 
-    def __init__(self, token: str, server_url: str) -> None:
+    def __init__(
+        self, token: str, server_url: str, *, anthropic_api_key: str | None = None
+    ) -> None:
         self.token = token
         self.server_url = server_url.rstrip("/")
         self.last_text = ""
-        self._opener = urllib.request.build_opener(_SameHostRedirects(self._hidden))
+        self._anthropic_api_key = (
+            None if anthropic_api_key is None else check_anthropic_key(anthropic_api_key)
+        )
+        # the testing override of D-021-4 is read once, here, for the opener
+        # and for `check_key_destination` alike
+        self._key_over_http = key_over_http_accepted()
+        self._opener = _build_opener(self.server_url, self._hidden, key_over_http=self._key_over_http)
+        self._warned_key_over_http = False
 
     def __repr__(self) -> str:
         return f"MatsyaClient(server_url={self.server_url!r})"
 
+    @property
+    def holds_personal_key(self) -> bool:
+        """Whether the client holds a personal Anthropic key, which it sends
+        with a job, a turn and a reply that may continue a job (AMD-MAT-021
+        §2.3)."""
+        return self._anthropic_api_key is not None
+
+    def check_key_destination(self) -> None:
+        """Refuse, with `MatsyaError` and before any request, to send a held
+        personal Anthropic key to an address other than an `https` address
+        or an `http` address whose host is literally `localhost`,
+        `127.0.0.1` or `::1` (`key_destination_allowed`, AMD-MAT-021 §2.4).
+        A client that holds no key is never refused. `submit_job`,
+        `start_job`, `ask`, `add_entry` of a `user` entry that names
+        `replies_to` and the project folder's `submit` call it before their
+        first request, so that no session, entry, job or turn is created for
+        work the client will not send with the key; the client never sends
+        such a request without the key, so that the work never runs under
+        the service's key in place of the holder's. Under the operator's
+        testing override (D-021-4), read once when the client is constructed
+        for this check and for the opener alike, the key is sent to such an
+        address and `KEY_OVER_HTTP_WARNING` is printed on standard error once
+        per client; a client built before the variable is set keeps
+        refusing."""
+        if self._anthropic_api_key is None or key_destination_allowed(self.server_url):
+            return
+        if not self._key_over_http:
+            raise MatsyaError(self._hidden(_key_destination_refusal(self.server_url)))
+        if not self._warned_key_over_http:
+            print(self._hidden(KEY_OVER_HTTP_WARNING.format(address=self.server_url)), file=sys.stderr)
+            self._warned_key_over_http = True
+
     # -- one request
 
     def _hidden(self, text: str) -> str:
-        """The text with the Matsya token replaced, so that no message shows it."""
-        return text.replace(self.token, "<Matsya token>") if self.token else text
+        """The text with the Matsya token and the personal Anthropic key
+        replaced by `TOKEN_MASK` and `KEY_MASK`, the longer secret first, so
+        that no message shows either (AMD-MAT-021 §2.5)."""
+        held = [(self.token, TOKEN_MASK), (self._anthropic_api_key, KEY_MASK)]
+        for secret, mask in sorted(
+            ((secret, mask) for secret, mask in held if secret), key=lambda pair: -len(pair[0])
+        ):
+            text = text.replace(secret, mask)
+        return text
 
     def _request(
         self,
@@ -1201,18 +1419,30 @@ class MatsyaClient:
         *,
         data: bytes | None = None,
         content_type: str | None = None,
+        personal_key: bool = False,
     ) -> Any:
         """Send one request to the route `path` and return the service's
         JSON answer; a refusal raises `MatsyaError` or one of its subclasses,
         as does a redirect to another scheme, host or port
-        (`_SameHostRedirects`). `body` is sent as JSON; `data`, with its
-        `content_type`, is sent as it stands, as a published archive is."""
+        (`_SameHostRedirects`). An exchange that `http.client` cannot
+        complete, such as an answer whose status line it cannot read, raises
+        `MatsyaError` naming only the class of the failure, since the
+        failure's text may repeat a secret (AMD-MAT-021 §§2.5 and 4). `body`
+        is sent as JSON; `data`, with its `content_type`, is sent as it
+        stands, as a published archive is.
+        With `personal_key` true, a held personal Anthropic key is sent in
+        the header `ANTHROPIC_KEY_HEADER`, beside the Matsya token and never
+        without it, once its destination has been checked again
+        (AMD-MAT-021 §§2.3 and 2.4)."""
         # imported here, since the package's __init__ imports this module first
         from bellman_matsya import __version__
 
         headers = {"Accept": "application/json", "User-Agent": f"bellman-matsya-client/{__version__}"}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
+            if personal_key and self._anthropic_api_key is not None:
+                self.check_key_destination()
+                headers[ANTHROPIC_KEY_HEADER] = self._anthropic_api_key
         if body is not None:
             data = json.dumps(body, ensure_ascii=False).encode("utf-8")
             headers["Content-Type"] = "application/json"
@@ -1236,18 +1466,34 @@ class MatsyaClient:
             raise MatsyaError(
                 self._hidden(f"The Matsya service at {self.server_url} did not answer: {error}.")
             ) from None
+        except http.client.HTTPException as error:
+            # its text may repeat the service's status line, and with it a
+            # secret, so only the name of its class is shown
+            raise MatsyaError(
+                self._hidden(
+                    f"The Matsya service at {self.server_url} could not be used: the HTTP "
+                    f"exchange failed ({type(error).__name__})."
+                )
+            ) from None
         self.last_text = text
         try:
             return json.loads(text)
         except ValueError:
-            raise MatsyaError(f"The answer of {method} {path} is not JSON.") from None
+            # the path may hold an identifier the service gave
+            raise MatsyaError(self._hidden(f"The answer of {method} {path} is not JSON.")) from None
 
     def _refusal(self, error: urllib.error.HTTPError) -> MatsyaError:
         """The error for a refused request: its status and the service's own
-        message, and for a refused Matsya token (401) how to supply one."""
+        message, with the two secrets replaced; for a refused Matsya token
+        (401), how to supply one; and for a reply refused because the job it
+        would continue ran under a personal key and the reply carries none
+        (`REPLY_NEEDS_KEY`, AMD-MAT-021 §3.3), how to supply a key
+        (`KEY_REMEDY`, §2.5)."""
         try:
             text = error.read().decode("utf-8", "replace")
-        except OSError:
+        except (OSError, http.client.HTTPException):
+            # a body that cannot be read, whose error may repeat a secret,
+            # is treated as no body
             text = ""
         status = error.code
         detail = self._hidden(
@@ -1258,6 +1504,8 @@ class MatsyaClient:
                 f"The service could not answer ({status}): {_sentence(detail)}", status, detail
             )
         message = f"The service refused the request ({status}): {_sentence(detail)}"
+        if detail.strip().rstrip(".") == REPLY_NEEDS_KEY:
+            message += " " + KEY_REMEDY
         if status == 401:
             return AuthenticationError(
                 f"{message} Run bellman-matsya configure to save the Matsya token AAS gave you, "
@@ -1285,13 +1533,15 @@ class MatsyaClient:
     ) -> dict[str, Any]:
         """Call `read` every `interval` seconds until its answer's state is
         final and return that answer; `on_change` receives each answer whose
-        state, step or cycle differs from the one before."""
+        state, step or cycle differs from the one before. Its messages,
+        which hold an identifier and a state the service gave, pass through
+        `_hidden` (AMD-MAT-021 §2.5)."""
         started = time.monotonic()
         seen = None
         while True:
             answer = read()
             if not isinstance(answer, dict) or "state" not in answer:
-                raise MatsyaError(f"The service's answer on {name} holds no state.")
+                raise MatsyaError(self._hidden(f"The service's answer on {name} holds no state."))
             progress = answer.get("progress") or {}
             observed = (answer["state"], progress.get("step"), progress.get("cycle"))
             if observed != seen:
@@ -1302,7 +1552,9 @@ class MatsyaClient:
                 return answer
             if timeout is not None and time.monotonic() - started >= timeout:
                 raise MatsyaError(
-                    f"{name} had not ended after {timeout:g} seconds; its state is {answer['state']}."
+                    self._hidden(
+                        f"{name} had not ended after {timeout:g} seconds; its state is {answer['state']}."
+                    )
                 )
             time.sleep(interval)
 
@@ -1398,6 +1650,7 @@ class MatsyaClient:
         configuration_id: str | None = None,
         model_key: str | None = None,
         source_cluster: str | None = None,
+        formulation: str | None = None,
     ) -> dict[str, Any]:
         """`POST /v1/model-iterations`: start a job of architect mode, and
         return its identifier, its state `queued`, the configuration ID the
@@ -1429,13 +1682,22 @@ class MatsyaClient:
         (AMD-MAT-020 §3). `model_key` and `source_cluster`, a pair of
         lowercase identifiers given together or not at all, exclude the
         job's own source cluster from what it reads (§4). An optional
-        argument left at `None` is not sent.
+        `formulation` names one model when the source states several; the
+        service accepts a nonempty description of at most 500 characters.
+        An optional argument left at `None` is not sent. A held personal
+        Anthropic key is sent with the request, and at an address that
+        fails `key_destination_allowed` the job is refused with
+        `MatsyaError` before the request (AMD-MAT-021 §§2.3 and 2.4); the
+        answer's `credential_source` is `client` when the service runs the
+        job with that key.
         """
+        self.check_key_destination()
         given = [value for value in (source_text, session) if value is not None]
         if len(given) != 1:
             raise ValueError("A job takes exactly one of source_text and session.")
         _check_configuration_id(configuration_id)
         _check_cluster(model_key, source_cluster)
+        _check_formulation(formulation)
         if paper and source_text is None:
             raise ValueError(
                 "paper marks source_text as a paper's text; a job from a session reads the "
@@ -1459,7 +1721,9 @@ class MatsyaClient:
         if model_key is not None:
             body["model_key"] = model_key
             body["source_cluster"] = source_cluster
-        return self._request("POST", "/v1/model-iterations", body)
+        if formulation is not None:
+            body["formulation"] = formulation
+        return self._request("POST", "/v1/model-iterations", body, personal_key=True)
 
     def job(self, job_id: str, view: str = "products") -> dict[str, Any]:
         """`GET /v1/model-iterations/{job_id}?view=...`: a job's state; its
@@ -1473,9 +1737,13 @@ class MatsyaClient:
         the configuration ID the service pinned to it, `configuration_id`,
         and the digests of its accepted request, its fixed source and its
         selected index, `request_sha256`, `source_sha256` and
-        `index_digest`, each `null` until fixed (AMD-MAT-020 §3); and, once
-        it has ended, its record under `result` or its error code under
-        `error`.
+        `index_digest`, each `null` until fixed (AMD-MAT-020 §3); the
+        credential the service selected for the job's language-model calls,
+        `credential_source`, `client` for the holder's personal Anthropic
+        key and `service` for the service's own (AMD-MAT-021 §3.4), absent
+        from a service built before that amendment; and, once it has ended,
+        its record under `result` or its error code under `error`, such as
+        `provider_rejected_credential` for a key the provider refused.
 
         `view` selects what the answer holds of an ended job's record
         (AMD-MAT-010 §3): `products`, the default, its final products and
@@ -1574,7 +1842,7 @@ class MatsyaClient:
             state = job.get("state")
             if job.get("error"):
                 state = f"{state}, error {job['error']}"
-            raise MatsyaError(f"Job {job_id} holds no record; its state is {state}.")
+            raise MatsyaError(self._hidden(f"Job {job_id} holds no record; its state is {state}."))
         texts = _folder_texts(job)
         if all_iterates:
             texts.update(_iterate_texts(self.job(job_id, view="full")))
@@ -1648,6 +1916,7 @@ class MatsyaClient:
         configuration_id: str | None = None,
         model_key: str | None = None,
         source_cluster: str | None = None,
+        formulation: str | None = None,
     ) -> dict[str, Any]:
         """Start a job of architect mode from a file, kept in a session, as
         `bellman-matsya job submit <file> --target <target>` does, and return the
@@ -1669,8 +1938,8 @@ class MatsyaClient:
         (AMD-MAT-012 §2). `target`, required and written by its name, is the
         level of the declaration the job returns, `stage`, `period`,
         `trellis` or `recipe` (AMD-MAT-011 §§2 and 3); `target`,
-        `max_cycles`, `force`, `configuration_id`, `model_key` and
-        `source_cluster` are sent as `submit_job` sends them.
+        `max_cycles`, `force`, `configuration_id`, `model_key`,
+        `source_cluster` and `formulation` are sent as `submit_job` sends them.
 
         The answer is ``{"session": ..., "entry": ..., "job": ...}``: the
         new session's record, or `None` where none was created; the answer
@@ -1679,14 +1948,20 @@ class MatsyaClient:
         its status route. An argument the client refuses raises
         `ValueError`, a target outside the four words and a PDF among them,
         and a file it cannot read `OSError`, before any request, so that no
-        session is created for a job the client refuses. When the service
+        session is created for a job the client refuses. A held personal
+        Anthropic key is sent with the job's request alone, and at an
+        address that fails `key_destination_allowed` the call raises
+        `MatsyaError` before its first request, so that it creates no
+        session and appends no entry (AMD-MAT-021 §2.4). When the service
         refuses the entry or the job after the session was created, the
         refusal's message names the session and the command that starts
         the job from it.
         """
+        self.check_key_destination()
         _check_target(target)
         _check_configuration_id(configuration_id)
         _check_cluster(model_key, source_cluster)
+        _check_formulation(formulation)
         if session is not None and no_session:
             raise ValueError("A job takes session or no_session, not both.")
         if name is not None and (session is not None or no_session):
@@ -1703,6 +1978,7 @@ class MatsyaClient:
             "configuration_id": configuration_id,
             "model_key": model_key,
             "source_cluster": source_cluster,
+            "formulation": formulation,
         }
         if is_pdf(path.name, data):
             raise ValueError(PDF_REFUSAL)
@@ -1737,6 +2013,8 @@ class MatsyaClient:
                     retry += f" --configuration-id {configuration_id}"
                 if model_key is not None:
                     retry += f" --model-key {model_key} --source-cluster {source_cluster}"
+                if formulation is not None:
+                    retry += f" --formulation {shlex.quote(formulation)}"
                 held = (
                     f"Session {session} holds the text of {path} as entry "
                     f"{entry['entry']['number']}, and no job was started from it; start one "
@@ -1746,7 +2024,8 @@ class MatsyaClient:
                 held = f"Session {session} was created and holds no entry."
             else:
                 raise
-            error.args = (f"{error} {held}",)
+            # the session's identifier is the service's (AMD-MAT-021 §2.5)
+            error.args = (self._hidden(f"{error} {held}"),)
             raise
         return {"session": created, "entry": entry, "job": job}
 
@@ -1776,7 +2055,19 @@ class MatsyaClient:
         starts that job's next preparation attempt. A request with a
         `delivery_id` the session already holds appends nothing and returns
         the entry held.
+
+        A `user` entry that names `replies_to` carries a held personal
+        Anthropic key, since the service may treat it as a reply that
+        schedules a new attempt, and at an address that fails
+        `key_destination_allowed` it is refused with `MatsyaError` before
+        the request (AMD-MAT-021 §§2.3 and 2.4); `scheduled` then reports
+        the attempt's `credential_source`. A reply to a question of a job
+        that ran under a personal key, sent without one, is refused by the
+        service (422), and the message says how to supply a key.
         """
+        personal_key = kind == "user" and replies_to is not None
+        if personal_key:
+            self.check_key_destination()
         body: dict[str, Any] = {"kind": kind}
         if text is not None:
             body["text"] = text
@@ -1784,7 +2075,9 @@ class MatsyaClient:
             body["replies_to"] = replies_to
         if delivery_id is not None:
             body["delivery_id"] = delivery_id
-        return self._request("POST", f"/v1/sessions/{_segment(session_id)}/entries", body)
+        return self._request(
+            "POST", f"/v1/sessions/{_segment(session_id)}/entries", body, personal_key=personal_key
+        )
 
     def session(self, session_id: str) -> dict[str, Any]:
         """`GET /v1/sessions/{session_id}`: the session's numbered entries,
@@ -1811,7 +2104,8 @@ class MatsyaClient:
     def turn(self, session_id: str, turn_id: str) -> dict[str, Any]:
         """`GET /v1/sessions/{session_id}/turns/{turn_id}`: a turn's state,
         `queued`, `running`, `finished`, `failed` or `interrupted`, its
-        progress and, once it is finished, its record."""
+        progress, its `credential_source` (AMD-MAT-021 §3.4) and, once it is
+        finished, its record."""
         return self._request(
             "GET", f"/v1/sessions/{_segment(session_id)}/turns/{_segment(turn_id)}"
         )
@@ -1868,8 +2162,15 @@ class MatsyaClient:
         `delivery_id` returns the turn already asked. `configuration_id`
         names a published configuration whose conversation role answers;
         left at `None`, the service resolves its default, and the turn's
-        answers carry the ID pinned to it (AMD-MAT-020 §3).
+        answers carry the ID pinned to it (AMD-MAT-020 §3). A held personal
+        Anthropic key is sent with the turn's request, not with the requests
+        that read the turn, and at an address that fails
+        `key_destination_allowed` the question is refused with `MatsyaError`
+        before any request (AMD-MAT-021 §§2.3 and 2.4); the turn's
+        `credential_source` is `client` when the service runs the turn, and
+        a job the turn starts, with that key.
         """
+        self.check_key_destination()
         _check_configuration_id(configuration_id)
         body: dict[str, Any] = {"question": question}
         if stage_file_path is not None:
@@ -1880,7 +2181,9 @@ class MatsyaClient:
             body["delivery_id"] = delivery_id
         if configuration_id is not None:
             body["configuration_id"] = configuration_id
-        asked = self._request("POST", f"/v1/sessions/{_segment(session_id)}/turns", body)
+        asked = self._request(
+            "POST", f"/v1/sessions/{_segment(session_id)}/turns", body, personal_key=True
+        )
         return self.wait_turn(
             session_id, asked["id"], interval=interval, on_change=on_change, timeout=timeout
         )

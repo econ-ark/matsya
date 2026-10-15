@@ -21,8 +21,6 @@ import re
 import urllib.error
 from pathlib import Path
 
-import pytest
-
 from conftest import TOKEN
 from bellman_matsya import __version__, config
 
@@ -45,25 +43,9 @@ THREE_PARTS = (
 )
 
 
-def _no_request(*arguments: object, **options: object) -> None:
-    raise AssertionError("these tests send no request")
-
-
-@pytest.fixture
-def new_machine(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    """A machine on which the client was never used: a temporary home folder
-    with no configuration file, neither BELLMAN_MATSYA_TOKEN nor BELLMAN_MATSYA_SERVER set,
-    and no request possible. Returns the configuration file's path."""
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr(config, "CONFIG_DIR", home / ".config" / "bellman-matsya")
-    monkeypatch.setattr(config, "CONFIG_FILE", home / ".config" / "bellman-matsya" / "config.toml")
-    for variable in ("BELLMAN_MATSYA_TOKEN", "BELLMAN_MATSYA_SERVER"):
-        monkeypatch.delenv(variable, raising=False)
-    # the client's opener and `urlopen` both send through `OpenerDirector.open`
-    monkeypatch.setattr("urllib.request.OpenerDirector.open", _no_request)
-    return config.CONFIG_FILE
+# `new_machine`, a machine on which the client was never used and from which
+# no request can be sent, is a fixture of conftest.py, which the tests of
+# AMD-MAT-021 share
 
 
 def _pages() -> list[tuple[str, Path]]:
@@ -253,6 +235,10 @@ def test_item_5_matsya_alone_prints_the_orientation_with_and_without_a_saved_tok
         "updates the client and its installed guide.",
         "",
         "No Matsya token is saved on this machine; `bellman-matsya configure` saves it.",
+        # the line on the personal Anthropic key that follows the Matsya
+        # token's line (AMD-MAT-021 §2.5)
+        "No personal Anthropic key is selected; new jobs and questions use the service's key, and a "
+        "reply that would continue a job run with a personal key is refused until one is selected.",
         "",
         "`bellman-matsya --help` lists the commands.",
     ]

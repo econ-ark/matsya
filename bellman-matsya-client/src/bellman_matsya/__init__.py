@@ -19,8 +19,16 @@ function, and a PDF is refused with `ValueError` before any request
 `configuration_id`, or takes the service's default; `export_job` saves a
 job's full answer as `job.json`; `publish_configuration` and
 `set_default_configuration` are the administrator's operations
-(AMD-MAT-020 §§2–3). `MatsyaClient` takes an explicit Matsya token and
-service address instead, and holds the same operations as methods. The module
+(AMD-MAT-020 §§2–3). A registered holder may add a personal Anthropic key to
+the Matsya token: these functions select BELLMAN_MATSYA_ANTHROPIC_KEY when it
+is set and nonempty, else the key `bellman-matsya configure
+--set-anthropic-key` saved, else none, and send a selected key with a job, a
+question and a reply that may continue a job, never with another request, and
+to a plain-HTTP address other than localhost, 127.0.0.1 or ::1 only when the
+environment holds BELLMAN_MATSYA_ANTHROPIC_KEY_OVER_HTTP=accept, the
+operator's testing override (AMD-MAT-021 §2.4, D-021-4). `MatsyaClient` takes an explicit Matsya token, service
+address and, as `anthropic_api_key`, any personal key instead, reads no key
+of its own, and holds the same operations as methods. The module
 `bellman_matsya.project` holds the four commands of a project folder, a model
 folder that remembers its session (AMD-MAT-013 §3): `init`, `submit`,
 `status` and `pull`, each called with a `MatsyaClient` and the folder.
@@ -41,9 +49,9 @@ from bellman_matsya.client import (
     ServerError,
     report_text,
 )
-from bellman_matsya.config import ConfigurationError, load_config
+from bellman_matsya.config import ConfigurationError, load_config, selected_anthropic_key
 
-__version__ = "0.11.1"
+__version__ = "0.12.1"
 
 __all__ = [
     "TARGETS",
@@ -76,14 +84,20 @@ __all__ = [
 
 
 def _make_client() -> MatsyaClient:
-    """A client with the configured Matsya token and service address."""
+    """A client with the configured Matsya token and service address, and
+    the personal Anthropic key selected as the command line selects it:
+    BELLMAN_MATSYA_ANTHROPIC_KEY when it is set and nonempty, else the saved
+    key, else none, in which case the service's key is used (AMD-MAT-021
+    §2.2). A selected key that is empty or holds a character an HTTP header
+    does not allow raises `ValueError` before any request."""
     cfg = load_config()
     if not cfg["token"]:
         raise ConfigurationError(
             "No Matsya token is configured. Run bellman-matsya configure, or set the "
             "environment variable BELLMAN_MATSYA_TOKEN."
         )
-    return MatsyaClient(token=cfg["token"], server_url=cfg["server"])
+    key, _ = selected_anthropic_key()
+    return MatsyaClient(token=cfg["token"], server_url=cfg["server"], anthropic_api_key=key)
 
 
 def index() -> dict[str, Any]:
@@ -140,6 +154,7 @@ def start_job(
     configuration_id: str | None = None,
     model_key: str | None = None,
     source_cluster: str | None = None,
+    formulation: str | None = None,
 ) -> dict[str, Any]:
     """Start a job of architect mode from a file at the target `target`, as
     `bellman-matsya job submit <file> --target <target>` does: a Markdown, LaTeX or
@@ -152,7 +167,8 @@ def start_job(
     declaration the job returns, `stage`, `period`, `trellis` or `recipe`.
     `configuration_id` names a published configuration, or the default is
     taken; `model_key` and `source_cluster` are given together or not at
-    all. Returns the service's answers as ``{"session": ..., "entry": ...,
+    all. `formulation` names one model when the source states several.
+    Returns the service's answers as ``{"session": ..., "entry": ...,
     "job": ...}`` (`MatsyaClient.start_job`)."""
     return _make_client().start_job(
         path,
@@ -166,6 +182,7 @@ def start_job(
         configuration_id=configuration_id,
         model_key=model_key,
         source_cluster=source_cluster,
+        formulation=formulation,
     )
 
 
@@ -181,6 +198,7 @@ def submit_job(
     configuration_id: str | None = None,
     model_key: str | None = None,
     source_cluster: str | None = None,
+    formulation: str | None = None,
 ) -> dict[str, Any]:
     """Start a job of architect mode from a description's text, a paper's
     text with `paper=True`, or a session, at the target `target`, which is
@@ -189,7 +207,8 @@ def submit_job(
     by their names in a declaration, such as `example.bl`; with
     `configuration_id`, under a published configuration, else the default;
     and with `model_key` and `source_cluster`, a pair given together, the
-    job's own source cluster excluded from what it reads
+    job's own source cluster excluded from what it reads; `formulation`
+    names one model when the source states several
     (`POST /v1/model-iterations`; `MatsyaClient.submit_job`)."""
     return _make_client().submit_job(
         source_text=source_text,
@@ -202,6 +221,7 @@ def submit_job(
         configuration_id=configuration_id,
         model_key=model_key,
         source_cluster=source_cluster,
+        formulation=formulation,
     )
 
 

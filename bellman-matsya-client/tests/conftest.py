@@ -15,13 +15,20 @@ starts the Matsya service itself under the test configuration of
 `packages/matsya/tests/fixtures/`, with a scripted caller in place of the
 model provider, on the loopback address; it is skipped where the service
 package, uvicorn or those tests are absent. No test reaches another address
-or calls a model provider, and none reads the user's own configuration file.
+or calls a model provider, and none reads the user's own configuration file
+or the personal Anthropic key of the environment it runs in (AMD-MAT-021
+§2.2); a test that needs a key sets a distinctive fake one. The stand-in
+treats the header of a personal key as `StandIn.personal_keys` says, so that
+a test can play the service of AMD-MAT-021 with its switch on or off, or a
+service built before it. `new_machine` is a machine on which the client was
+never used and from which no request can be sent.
 """
 
 from __future__ import annotations
 
 import copy
 import hashlib
+import inspect
 import json
 import re
 import shutil
@@ -153,6 +160,17 @@ TURN_FIELDS = {
     "configuration_id",
 }
 CONFIGURATION_ID = re.compile(r"[0-9a-f]{64}")
+# the header of a personal Anthropic key in lower case, the routes that read
+# it, and the service's sentences for the refusals of AMD-MAT-021 §§3.1 and
+# 3.3
+KEY_HEADER = "bellman-matsya-anthropic-key"
+KEYED_ROUTES = ("submit", "ask", "add_entry")
+EMPTY_KEY = "The Bellman-Matsya-Anthropic-Key header is empty"
+KEYS_REFUSED = "This service does not accept a personal Anthropic key"
+REPLY_NEEDS_KEY = (
+    "The job awaiting this reply ran under a personal Anthropic key; send the reply with a "
+    "personal Anthropic key"
+)
 
 
 def request_digest(body: dict) -> str:
@@ -664,11 +682,42 @@ class StandIn:
     `CYCLE_MAXIMUM` are refused, as the service refuses them. With
     `echo_token` true, a refused Matsya token is repeated in the refusal's
     message, as a careless proxy might repeat it.
+
+    The job, turn and entry routes read the header of a personal Anthropic
+    key after the Matsya token and before the session and the body
+    (AMD-MAT-021 §3.1), as `personal_keys` says: `"accept"`, the service of
+    the amendment with its switch on, runs the work under the key and
+    reports `credential_source` `client`, a job a turn starts and an
+    attempt a reply schedules taking the credential of their own request;
+    `"refuse"`, the switch off, answers 403 and creates nothing; `"ignore"`
+    reports `service` for work sent with a key; and `"older"`, a service
+    built before the amendment, ignores the header and reports no
+    `credential_source`. Every service but the older one reports the field
+    in the answers of a job, a turn and a scheduled attempt, `service` for
+    work sent without a key, and refuses an empty header with 422. A new
+    reply that would continue a job run under a personal key, sent without
+    one, is refused with 422 and `REPLY_NEEDS_KEY`, and the session is
+    unchanged (§3.3); a repeated `delivery_id` returns the entry held,
+    appends nothing, starts nothing and needs no key. With
+    `echo_personal_key` true, a request that carries a key is refused with
+    403 and the key repeated in the message. With `key_as_identifier` true,
+    the job, turn or scheduled attempt that a request carrying a key
+    creates is identified by that key, as a broken or hostile service might
+    identify it, so that a test can see that no line the client composes
+    from an answer shows the key (AMD-MAT-021 §2.5).
     """
 
     def __init__(self, token: str) -> None:
         self.token = token
         self.echo_token = False
+        # the treatment of a personal Anthropic key, and the deliveries the
+        # sessions hold by session and `delivery_id` (AMD-MAT-021 §§3.1–3.4)
+        self.personal_keys = "accept"
+        self.echo_personal_key = False
+        self.key_as_identifier = False
+        # the personal key the request being answered carries, or None
+        self.received_key: str | None = None
+        self.deliveries: dict[tuple[str, str], dict[str, Any]] = {}
         # the published configurations by ID with their versions, the
         # default, and whether the token's principal is an administrator
         # (AMD-MAT-020 §§2 and 3)
@@ -703,15 +752,23 @@ class StandIn:
     ) -> tuple[int, str]:
         self.requests.append({"method": method, "path": target, "headers": headers, "body": body})
         split = urllib.parse.urlsplit(target)
+        key = next((value for name, value in headers.items() if name.lower() == KEY_HEADER), None)
+        self.received_key = key
         status, payload = self._route(
-            method, split.path, headers.get("Authorization", ""), body, split.query
+            method, split.path, headers.get("Authorization", ""), body, split.query, key
         )
         text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         self.answers.append(text)
         return status, text
 
     def _route(
-        self, method: str, path: str, authorization: str, body: Any, query: str = ""
+        self,
+        method: str,
+        path: str,
+        authorization: str,
+        body: Any,
+        query: str = "",
+        key: str | None = None,
     ) -> tuple[int, Any]:
         if (method, path) == ("GET", "/healthz"):
             return 200, {"status": "ok"}
@@ -727,8 +784,28 @@ class StandIn:
                 arguments = found.groupdict()
                 if name == "job":
                     arguments["query"] = dict(urllib.parse.parse_qsl(query))
+                if name in KEYED_ROUTES:
+                    refused, arguments["credential"] = self._credential(key)
+                    if refused is not None:
+                        return refused
                 return getattr(self, "_" + name)(body, **arguments)
         return 404, {"detail": "Not Found"}
+
+    def _credential(self, key: str | None) -> tuple[tuple[int, Any] | None, str | None]:
+        """The refusal of a request's personal-key header, or the credential
+        its work runs under: `client`, `service`, or None for a service
+        built before AMD-MAT-021, which reports none (§§3.1 and 3.4)."""
+        if key is not None and self.echo_personal_key:
+            return (403, {"detail": f"The personal Anthropic key {key} is refused"}), None
+        if self.personal_keys == "older":
+            return None, None
+        if key is None:
+            return None, "service"
+        if not key.strip():
+            return (422, {"detail": EMPTY_KEY}), None
+        if self.personal_keys == "refuse":
+            return (403, {"detail": KEYS_REFUSED}), None
+        return None, "client" if self.personal_keys == "accept" else "service"
 
     # -- the index
 
@@ -882,7 +959,7 @@ class StandIn:
             held["revision"] = entry["number"]
         return entry
 
-    def _add_entry(self, body: Any, session_id: str) -> tuple[int, Any]:
+    def _add_entry(self, body: Any, session_id: str, credential: str | None = "service") -> tuple[int, Any]:
         held = self.sessions.get(session_id)
         if held is None:
             return 404, {"detail": "Session not found"}
@@ -904,18 +981,43 @@ class StandIn:
             if type(replies_to) is int and 0 < replies_to <= len(held["entries"])
             else None
         )
+        delivery_id = body.get("delivery_id")
+        if delivery_id is not None and (session_id, delivery_id) in self.deliveries:
+            # a repeated delivery appends nothing, starts nothing and needs
+            # no key (AMD-MAT-021 §3.3)
+            entry = self.deliveries[(session_id, delivery_id)]
+            return 200, {**self._listing(session_id), "entry": entry, "repeated": True, "scheduled": None}
+        schedules = bool(
+            kind == "user" and held["awaiting_answer"] and replied and replied["kind"] == "question"
+        )
+        if (
+            schedules
+            and self.jobs[held["awaiting_answer"]]["credential_source"] == "client"
+            and credential != "client"
+        ):
+            # the session is left unchanged (AMD-MAT-021 §3.3)
+            return 422, {"detail": REPLY_NEEDS_KEY}
         entry = self._append(session_id, kind, str(body.get("text", "")).strip(), replies_to=replies_to)
+        if delivery_id is not None:
+            self.deliveries[(session_id, delivery_id)] = entry
         scheduled = None
-        if kind == "user" and held["awaiting_answer"] and replied and replied["kind"] == "question":
+        if schedules:
             # the attempt copies the request of the job awaiting an answer,
             # its target among it (`_schedule` of `jobs.py`)
             earlier = self.jobs[held["awaiting_answer"]]
-            # the attempt inherits the earlier job's configuration (AMD-MAT-020 §3)
+            # the attempt inherits the earlier job's configuration (AMD-MAT-020
+            # §3) and records the credential of its own reply (AMD-MAT-021 §3.3)
             job_id = self._new_job(
-                session_id, "converged", earlier["target"], earlier["configuration_id"]
+                session_id,
+                "converged",
+                earlier["target"],
+                earlier["configuration_id"],
+                credential=credential,
             )
             held["awaiting_answer"] = None
             scheduled = {"id": job_id, "status_url": f"/v1/model-iterations/{job_id}"}
+            if credential is not None:
+                scheduled["credential_source"] = credential
         return 200, {**self._listing(session_id), "entry": entry, "repeated": False, "scheduled": scheduled}
 
     def _default_job(self, session_id: str) -> str | None:
@@ -931,7 +1033,7 @@ class StandIn:
                 return job_id
         return None
 
-    def _ask(self, body: Any, session_id: str) -> tuple[int, Any]:
+    def _ask(self, body: Any, session_id: str, credential: str | None = "service") -> tuple[int, Any]:
         if session_id not in self.sessions:
             return 404, {"detail": "Session not found"}
         if not isinstance(body, dict) or set(body) - TURN_FIELDS:
@@ -942,7 +1044,7 @@ class StandIn:
         if refused is not None:
             return refused
         question = self._append(session_id, "user", body["question"])
-        turn_id = uuid.uuid4().hex
+        turn_id = self._identifier()
         self.sessions[session_id]["turns"].append(turn_id)
         base = {
             "id": turn_id,
@@ -951,16 +1053,19 @@ class StandIn:
             "events": [],
             "configuration_id": configuration_id,
         }
+        if credential is not None:
+            base["credential_source"] = credential
         default = self._default_job(session_id)
         started = None
         if JOB_REQUEST in body["question"].casefold():
             # the job's version is fixed at the submission, the question
             # included (AMD-MAT-009 §3); its target is the narrowest of the
-            # four words the question names, else `stage` (AMD-MAT-011 §3)
+            # four words the question names, else `stage` (AMD-MAT-011 §3);
+            # it runs under the turn's credential (AMD-MAT-021 §3.2)
             named = [word for word in TARGETS if re.search(rf"\b{word}\b", body["question"].casefold())]
             target = named[0] if named else "stage"
             end = self.next_ends.pop(0) if self.next_ends else "converged"
-            job_id = self._new_job(session_id, end, target, configuration_id)
+            job_id = self._new_job(session_id, end, target, configuration_id, credential=credential)
             self.jobs[job_id]["revision"] = self.sessions[session_id]["revision"]
             started = {"id": job_id, "label": self._label(job_id, "queued")}
         result = {
@@ -995,7 +1100,7 @@ class StandIn:
             {**base, "state": "running", "progress": {"step": "conversation", "cycle": 0}},
             {**base, "state": "finished", "progress": {"step": "conversation", "cycle": 0}, "record": record},
         ]
-        return 202, {
+        accepted = {
             "id": turn_id,
             "state": "queued",
             "question": question["number"],
@@ -1003,6 +1108,9 @@ class StandIn:
             "configuration_id": configuration_id,
             "status_url": f"/v1/sessions/{session_id}/turns/{turn_id}",
         }
+        if credential is not None:
+            accepted["credential_source"] = credential
+        return 202, accepted
 
     def _turn(self, body: Any, session_id: str, turn_id: str) -> tuple[int, Any]:
         frames = self.turns.get(turn_id)
@@ -1065,11 +1173,22 @@ class StandIn:
             "source_sha256": job["source_sha256"],
             "index_digest": job["index_digest"],
         }
+        if job["credential_source"] is not None:
+            # the credential selected for the job's calls (AMD-MAT-021 §3.4)
+            shown["credential_source"] = job["credential_source"]
         if job["revision"] is not None:
             shown["revision"] = job["revision"]
         if job["current"] is not None and frame["state"] in JOB_ENDED:
             shown["current"] = job["current"]
         return shown
+
+    def _identifier(self) -> str:
+        """The identifier of a new job or turn: with `key_as_identifier`
+        true, the personal key the request carries, when it carries one;
+        otherwise a random identifier."""
+        if self.key_as_identifier and self.received_key is not None:
+            return self.received_key
+        return uuid.uuid4().hex
 
     def _new_job(
         self,
@@ -1078,14 +1197,17 @@ class StandIn:
         target: str,
         configuration_id: str | None = None,
         request: dict | None = None,
+        credential: str | None = "service",
     ) -> str:
         """A job of the session, or of no session, that ends with the record
         `end` of `RECORDS`, which carries the job's target, as the service's
         record carries the target of the job's request, pinned to
         `configuration_id`, the default when none is given, with the
         request's digest and, for a direct source, the source's digest fixed
-        at once (AMD-MAT-020 §3)."""
-        job_id = uuid.uuid4().hex
+        at once (AMD-MAT-020 §3), and run under `credential`, `client` or
+        `service`, or None for a service that reports none (AMD-MAT-021
+        §3.4)."""
+        job_id = self._identifier()
         base = {"id": job_id, "events": [], "created_at": NOW, "updated_at": NOW}
         number = None
         if session_id is not None:
@@ -1125,10 +1247,11 @@ class StandIn:
             "request_sha256": request_digest(request),
             "source_sha256": source_digest,
             "index_digest": None,
+            "credential_source": credential,
         }
         return job_id
 
-    def _submit(self, body: Any) -> tuple[int, Any]:
+    def _submit(self, body: Any, credential: str | None = "service") -> tuple[int, Any]:
         if not isinstance(body, dict) or set(body) - JOB_FIELDS:
             return 422, {"detail": "The model request has unsupported fields"}
         if "source" not in body and "session" not in body:
@@ -1169,13 +1292,16 @@ class StandIn:
         if refused is not None:
             return refused
         end = self.next_ends.pop(0) if self.next_ends else ("needs_input" if session_id else "converged")
-        job_id = self._new_job(session_id, end, body["target"], configuration_id, body)
-        return 202, {
+        job_id = self._new_job(session_id, end, body["target"], configuration_id, body, credential)
+        accepted = {
             "id": job_id,
             "state": "queued",
             "configuration_id": configuration_id,
             "status_url": f"/v1/model-iterations/{job_id}",
         }
+        if credential is not None:
+            accepted["credential_source"] = credential
+        return 202, accepted
 
     def _job(self, body: Any, job_id: str, query: dict[str, str] | None = None) -> tuple[int, Any]:
         """A job as the service returns it: an ended job's record in the
@@ -1260,6 +1386,44 @@ def _user(monkeypatch: pytest.MonkeyPatch, folder: Path, server: str, token: str
     _loopback_only(monkeypatch)
 
 
+def _no_request(*arguments: object, **options: object) -> None:
+    raise AssertionError("these tests send no request")
+
+
+@pytest.fixture(autouse=True)
+def _no_personal_key_of_the_user(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove BELLMAN_MATSYA_ANTHROPIC_KEY and
+    BELLMAN_MATSYA_ANTHROPIC_KEY_OVER_HTTP from every test's environment, so
+    that no test sends the personal Anthropic key of whoever runs the tests
+    or runs under their override (AMD-MAT-021 §§2.2, 2.4); a test that needs
+    a key sets a fake one."""
+    monkeypatch.delenv("BELLMAN_MATSYA_ANTHROPIC_KEY", raising=False)
+    monkeypatch.delenv("BELLMAN_MATSYA_ANTHROPIC_KEY_OVER_HTTP", raising=False)
+
+
+@pytest.fixture
+def new_machine(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """A machine on which the client was never used: a temporary home folder
+    with no configuration file, none of BELLMAN_MATSYA_TOKEN,
+    BELLMAN_MATSYA_SERVER, BELLMAN_MATSYA_ANTHROPIC_KEY and
+    BELLMAN_MATSYA_ANTHROPIC_KEY_OVER_HTTP set, and no request possible. Returns the configuration file's path."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(config, "CONFIG_DIR", home / ".config" / "bellman-matsya")
+    monkeypatch.setattr(config, "CONFIG_FILE", home / ".config" / "bellman-matsya" / "config.toml")
+    for variable in (
+        "BELLMAN_MATSYA_TOKEN",
+        "BELLMAN_MATSYA_SERVER",
+        "BELLMAN_MATSYA_ANTHROPIC_KEY",
+        "BELLMAN_MATSYA_ANTHROPIC_KEY_OVER_HTTP",
+    ):
+        monkeypatch.delenv(variable, raising=False)
+    # the client's opener and `urlopen` both send through `OpenerDirector.open`
+    monkeypatch.setattr("urllib.request.OpenerDirector.open", _no_request)
+    return config.CONFIG_FILE
+
+
 @pytest.fixture
 def stand_in(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """The stand-in service, started on the loopback address, and a user
@@ -1310,7 +1474,11 @@ def service(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     material and `model_prose` the model prose the scripted
     Model-prose-writer writes from it, which opens with the heading
     Structure (AMD-MAT-011 §3). `application` is the service's application,
-    whose `state.runner` is its job runner."""
+    whose `state.runner` is its job runner. A service that reads a personal
+    Anthropic key runs with its switch on, `state.accept_personal_keys`,
+    which a test may turn off, and `keys` holds, for each job or turn whose
+    caller was built, the personal key it was built with, or None for the
+    service's key (AMD-MAT-021 §§3.1 and 3.2)."""
     uvicorn = pytest.importorskip("uvicorn")
     pytest.importorskip("matsya_service")
     if not (SERVICE_TESTS / "scripted.py").is_file():
@@ -1380,12 +1548,25 @@ def service(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
             "INSERT INTO tokens VALUES (1, 11, ?, NULL)", (hashlib.sha256(TOKEN.encode()).hexdigest(),)
         )
     caller = ScriptedCaller(converging())
+    keys: list[str | None] = []
+
+    def caller_factory(roles: object, ledger: object, *, anthropic_api_key: str | None = None):
+        keys.append(anthropic_api_key)
+        return caller
+
+    # the switch of AMD-MAT-021 §3.1, where the service has it
+    switch = (
+        {"accept_personal_keys": True}
+        if "accept_personal_keys" in inspect.signature(create_app).parameters
+        else {}
+    )
     application = create_app(
-        processor=ModelProcessor(folder, caller_factory=lambda roles, ledger: caller),
+        processor=ModelProcessor(folder, caller_factory=caller_factory),
         retrieval_index=load_active(index_root, _StandInEmbeddings(), None),
         token_db_path=tokens,
         job_db_path=tmp_path / "jobs.db",
         configuration=folder,
+        **switch,
     )
     listening = socket.socket()
     listening.bind(("127.0.0.1", 0))
@@ -1410,6 +1591,7 @@ def service(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         description=DESCRIPTION,
         model_prose=MODEL_PROSE,
         application=application,
+        keys=keys,
     )
     server.should_exit = True
     thread.join(10)

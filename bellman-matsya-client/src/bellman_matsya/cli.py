@@ -4,15 +4,15 @@ spec 0.3 from a terminal and prints the user guide installed with it:
     matsya
     bellman-matsya docs [<page> | --all] [--online]
     bellman-matsya docs --path
-    bellman-matsya configure
+    bellman-matsya configure [--set-anthropic-key | --clear-anthropic-key]
     bellman-matsya index
     bellman-matsya search "<query>" [--collections NAMES] [--limit N]
     bellman-matsya job submit <file> --target {stage,period,trellis,recipe} [--paper]
                              [--name NAME | --session <session> | --no-session]
                              [--max-cycles N] [--force] [--configuration-id ID]
-                             [--model-key KEY --source-cluster CLUSTER]
+                             [--model-key KEY --source-cluster CLUSTER] [--formulation TEXT]
     bellman-matsya job submit --session <session> --target {stage,period,trellis,recipe}
-                      [--max-cycles N] [--force] [--configuration-id ID]
+                      [--max-cycles N] [--force] [--configuration-id ID] [--formulation TEXT]
     bellman-matsya job status <job>
     bellman-matsya job wait <job> [--interval SECONDS]
     bellman-matsya job files <job> <folder> [--all-iterates] [--overwrite]
@@ -94,11 +94,35 @@ is refused with one sentence and exit status 2, before any request. In a
 project folder, `bellman-matsya` alone adds the folder's session, its latest job's
 label and the questions awaiting a reply to the orientation (AMD-MAT-015
 §2).
+
+A registered holder of a Matsya token may add a personal Anthropic API key
+once the Matsya token is configured, never in its place (AMD-MAT-021 §2).
+`configure --set-anthropic-key` asks for the key at a prompt that does not
+show it and saves it in an owner-only file, `configure --clear-anthropic-key`
+removes it, and a nonempty BELLMAN_MATSYA_ANTHROPIC_KEY supplies a key
+without saving it, in place of a saved key. The selected key is checked
+before the client is built, and a key that an HTTP header cannot carry is
+refused with one sentence naming its source and exit status 1. The key is
+sent only by `job submit`, `project submit`, `ask` and `session add` of a
+`user` entry with `--replies-to`, which are refused before their first
+request at an address that is neither HTTPS nor a literal loopback host,
+unless the environment holds BELLMAN_MATSYA_ANTHROPIC_KEY_OVER_HTTP=accept
+(`key_over_http_accepted`, D-021-4), when the command sends the key and
+prints `client.KEY_OVER_HTTP_WARNING` once on standard error.
+For new work sent with the key, a command prints `CREDENTIAL_LINE` when the
+service reports `credential_source` `client`; otherwise it prints its usual
+lines, reports on standard error that the service accepted the work under
+its own key, and exits with status 1. `job status` and `job wait` print the
+same line for a job run with a personal key, and `bellman-matsya` alone
+names the credential that the next job, question or reply uses. Every line
+the command composes, its errors among them, shows the Matsya token as
+`<Matsya token>` and the key as `<Anthropic API key>`.
 """
 
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
 import sys
@@ -118,13 +142,28 @@ from bellman_matsya.client import (
     TARGETS,
     MatsyaClient,
     MatsyaError,
+    _check_formulation,
     _item,
     _report_sections,
     check_folder,
     is_pdf,
     available_writing_files,
+    key_destination_allowed,
+    key_over_http_accepted,
 )
-from bellman_matsya.config import ConfigurationError, first_use, load_config, save_config, token_file
+from bellman_matsya.config import (
+    ANTHROPIC_KEY_VARIABLE,
+    ConfigurationError,
+    anthropic_key_file,
+    check_anthropic_key,
+    clear_anthropic_key,
+    first_use,
+    load_config,
+    save_anthropic_key,
+    save_config,
+    selected_anthropic_key,
+    token_file,
+)
 from bellman_matsya.project import ProjectRefusal
 
 # The roles displayed for job steps. `reconstruction` remains for records
@@ -172,6 +211,66 @@ FIRST_USE = (
     "This is the first use of bellman-matsya on this machine.\n"
     "An assistant working for the user reads the guide first: bellman-matsya docs --all"
 )
+# the line printed for new work that the service ran with the holder's
+# personal Anthropic key, and by `job status` and `job wait` for such a job
+# (AMD-MAT-021 §2.5)
+CREDENTIAL_LINE = "Credential: your Anthropic API key"
+# the refusal of `configure --set-anthropic-key` on a machine with no Matsya
+# token (AMD-MAT-021 §2.1)
+NO_TOKEN_FOR_KEY = (
+    "Error: no Matsya token is configured. A personal Anthropic key is an addition to a Matsya "
+    "token, not a substitute for it: save the Matsya token the service's administrator gave you "
+    "with bellman-matsya configure, or set BELLMAN_MATSYA_TOKEN."
+)
+# the refusals of a key that is empty or holds a character an HTTP header
+# does not allow: a selected key, by its source, and a key entered at the
+# prompt of `configure --set-anthropic-key` (AMD-MAT-021 §2.2)
+VARIABLE_KEY_REFUSAL = (
+    "Error: the personal Anthropic key in BELLMAN_MATSYA_ANTHROPIC_KEY is empty or contains a "
+    "space, a line break or another character that an HTTP header does not allow; set the "
+    "variable to the key alone, or unset it to use the service's key."
+)
+FILE_KEY_REFUSAL = (
+    "Error: the personal Anthropic key in the saved file {path} is empty or contains a space, a "
+    "line break or another character that an HTTP header does not allow; set it again with "
+    "bellman-matsya configure --set-anthropic-key, or remove it with bellman-matsya configure "
+    "--clear-anthropic-key."
+)
+ENTERED_KEY_REFUSAL = (
+    "Error: the key you entered is empty or contains a space, a line break or another character "
+    "that an HTTP header does not allow; nothing was saved."
+)
+# the prompt of `configure --set-anthropic-key`, which does not show what is
+# typed
+KEY_PROMPT = "Enter your Anthropic API key (it is not shown): "
+# the orientation's line on the credential the next job, question or reply
+# uses, in its three states, checked in this order, and the sentence added
+# when a key is selected and the service address would not receive it
+# (AMD-MAT-021 §2.5); `configure --set-anthropic-key` prints the same
+# sentence after it saves a key at such an address
+KEY_FROM_VARIABLE = (
+    "The environment variable `BELLMAN_MATSYA_ANTHROPIC_KEY` is set; new jobs, questions and "
+    "replies that continue a job use its value in place of any saved key, and the Anthropic "
+    "account of that key is charged."
+)
+KEY_SAVED = (
+    "A personal Anthropic key is saved on this machine, in `{file}`; new jobs, questions and "
+    "replies that continue a job use it, and the Anthropic account of that key is charged."
+)
+NO_KEY = (
+    "No personal Anthropic key is selected; new jobs and questions use the service's key, and a "
+    "reply that would continue a job run with a personal key is refused until one is selected."
+)
+PLAIN_HTTP = (
+    "The service address {address} uses plain HTTP, so the client refuses to send a job, a "
+    "question or a reply with this key."
+)
+# the sentence printed in place of PLAIN_HTTP when the environment holds
+# BELLMAN_MATSYA_ANTHROPIC_KEY_OVER_HTTP=accept (`key_over_http_accepted`, D-021-4)
+KEY_OVER_HTTP = (
+    "BELLMAN_MATSYA_ANTHROPIC_KEY_OVER_HTTP=accept is set, so the client sends this key "
+    "unencrypted to {address}, which uses plain HTTP."
+)
 
 EPILOG = """\
 Read first:
@@ -182,6 +281,13 @@ Set up once:
   bellman-matsya configure                   save your Matsya token
   export BELLMAN_MATSYA_SERVER=...           override the Bellman service address
   export BELLMAN_MATSYA_TOKEN=...            override the saved Matsya token
+
+Optional additions, once the Matsya token is configured: your own Anthropic API key, whose
+account is then charged for your jobs, your questions and your replies that continue a job:
+  bellman-matsya configure --set-anthropic-key     save the key; the prompt does not show it
+  bellman-matsya configure --clear-anthropic-key   remove the saved key
+  export BELLMAN_MATSYA_ANTHROPIC_KEY="$(cat <private file>)"
+                                                   use a key without saving it
 
 Examples:
   bellman-matsya index
@@ -276,15 +382,17 @@ def _step_text(progress: dict[str, Any] | None) -> str:
     return text
 
 
-def _reporter(stream: Any) -> Callable[[dict[str, Any]], None]:
+def _reporter(stream: Any, hidden: Callable[[str], str]) -> Callable[[dict[str, Any]], None]:
     """The function that prints a job's or a turn's state, step and cycle
-    whenever they change while the command waits."""
+    whenever they change while the command waits, each line passed through
+    `hidden`, the client's mask of the Matsya token and the personal key
+    (AMD-MAT-021 §2.5)."""
 
     def report(answer: dict[str, Any]) -> None:
         if answer.get("state") in ("queued", "running"):
             step = _step_text(answer.get("progress"))
             line = f"{answer['state']}: {step}" if step else str(answer["state"])
-            print(f"{time.strftime('%H:%M:%S')}  {line}", file=stream, flush=True)
+            print(f"{time.strftime('%H:%M:%S')}  {hidden(line)}", file=stream, flush=True)
 
     return report
 
@@ -626,6 +734,45 @@ def _kept_line(session_id: object) -> str:
     )
 
 
+def _credential_lines(
+    client: MatsyaClient, args: argparse.Namespace, work: dict[str, Any], kind: str
+) -> list[str]:
+    """The line on the credential of new work, a job or a turn, that the
+    client sent with a personal Anthropic key (AMD-MAT-021 §2.5):
+    `CREDENTIAL_LINE` when the work's `credential_source` is `client`.
+    When the field is absent or `service`, as from a service built before
+    the amendment, which ignores the key, no line is added, and the refusal
+    that the command prints on standard error after its usual lines, with
+    exit status 1, is kept in `args.credential_refusal`: the service
+    accepted the work under its own key, and a job can be cancelled. Both
+    lines hold the identifier the service gave and pass through the
+    client's mask of the two secrets. A client that holds no key adds
+    nothing."""
+    if not client.holds_personal_key:
+        return []
+    if work.get("credential_source") == "client":
+        return [CREDENTIAL_LINE]
+    work_id = work.get("id")
+    args.credential_refusal = [
+        client._hidden(
+            f"Error: the service at {client.server_url} accepted {kind} {work_id} under its own "
+            "Anthropic key, not yours."
+        )
+    ]
+    if kind == "job":
+        args.credential_refusal.append(
+            client._hidden(f"Cancel it with: bellman-matsya job cancel {work_id}")
+        )
+    return []
+
+
+def _status_credential(job: dict[str, Any]) -> list[str]:
+    """`CREDENTIAL_LINE` for a job whose `credential_source` is `client`,
+    which `job status` and `job wait` print; nothing for a job run with the
+    service's key (AMD-MAT-021 §2.5)."""
+    return [CREDENTIAL_LINE] if job.get("credential_source") == "client" else []
+
+
 def _job_submit(client: MatsyaClient, args: argparse.Namespace) -> list[str]:
     # the target, which the parser requires, is sent in every form of the
     # request (AMD-MAT-011 §3)
@@ -636,11 +783,16 @@ def _job_submit(client: MatsyaClient, args: argparse.Namespace) -> list[str]:
         "configuration_id": args.configuration_id,
         "model_key": args.model_key,
         "source_cluster": args.source_cluster,
+        "formulation": args.formulation,
     }
     if args.file is None:
         # the job reads the session's entries as they stand
         job = client.submit_job(session=args.session, **options)
-        return _started_lines(job) + [_kept_line(args.session)]
+        return (
+            _started_lines(job)
+            + [_kept_line(args.session)]
+            + _credential_lines(client, args, job, "job")
+        )
     try:
         started = client.start_job(
             args.file,
@@ -655,12 +807,13 @@ def _job_submit(client: MatsyaClient, args: argparse.Namespace) -> list[str]:
     except ValueError as error:
         raise CommandError(str(error)) from None
     job, listing = started["job"], started["entry"]
+    credential = _credential_lines(client, args, job, "job")
     if listing is None:
         # no session, as the user asked with --no-session
         return _started_lines(job) + [
             "The job has no session, and its questions stand in its record only: "
             f"bellman-matsya job status {job.get('id')}"
-        ]
+        ] + credential
     entry = listing.get("entry") or {}
     # a paper is an entry of the kind paper, which the line names
     # (AMD-MAT-012 §2)
@@ -670,16 +823,19 @@ def _job_submit(client: MatsyaClient, args: argparse.Namespace) -> list[str]:
         f"Entry {entry.get('number')}{marked}: the text of {args.file}",
         *_started_lines(job),
         _kept_line(listing.get("id")),
+        *credential,
     ]
 
 
 def _job_status(client: MatsyaClient, args: argparse.Namespace) -> list[str]:
-    return _job_lines(client.job(args.job_id))
+    job = client.job(args.job_id)
+    return _job_lines(job) + _status_credential(job)
 
 
 def _job_wait(client: MatsyaClient, args: argparse.Namespace) -> list[str]:
-    report = _reporter(sys.stderr if args.json else sys.stdout)
-    return _job_lines(client.wait_job(args.job_id, interval=args.interval, on_change=report))
+    report = _reporter(sys.stderr if args.json else sys.stdout, client._hidden)
+    job = client.wait_job(args.job_id, interval=args.interval, on_change=report)
+    return _job_lines(job) + _status_credential(job)
 
 
 def _written_lines(paths: list[Path], folder: str) -> list[str]:
@@ -721,6 +877,10 @@ def _session_new(client: MatsyaClient, args: argparse.Namespace) -> list[str]:
 
 
 def _session_add(client: MatsyaClient, args: argparse.Namespace) -> list[str]:
+    """Append an entry and print it, with the preparation attempt a reply
+    started. A `user` entry with `--replies-to` carries a held personal
+    key, and the attempt it scheduled, unless the delivery was repeated, is
+    new work whose credential is checked (AMD-MAT-021 §2.5)."""
     text = None if args.kind == "acceptance" else _entry_text(args.file)
     answer = client.add_entry(
         args.session_id,
@@ -729,7 +889,16 @@ def _session_add(client: MatsyaClient, args: argparse.Namespace) -> list[str]:
         replies_to=args.replies_to,
         delivery_id=args.delivery_id,
     )
-    return _entry_added_lines(answer)
+    lines = _entry_added_lines(answer)
+    scheduled = answer.get("scheduled")
+    if (
+        args.kind == "user"
+        and args.replies_to is not None
+        and isinstance(scheduled, dict)
+        and not answer.get("repeated")
+    ):
+        lines += _credential_lines(client, args, scheduled, "job")
+    return lines
 
 
 def _session_show(client: MatsyaClient, args: argparse.Namespace) -> list[str]:
@@ -746,11 +915,16 @@ def _ask(client: MatsyaClient, args: argparse.Namespace) -> list[str]:
     job the turn started, as `job wait` does, and write its model folder, as
     `job files` does (AMD-MAT-009 §5). The folder is checked before the
     question is sent, so that a folder that is not empty refuses the command
-    before any request."""
+    before any request. A question sent with a personal Anthropic key is
+    followed by the turn's credential line; when the service ran the turn
+    under its own key, the command prints its usual lines, the followed
+    job's among them, and then reports that the service accepted the turn
+    under its own key (AMD-MAT-021 §2.5). The job's lines name its
+    credential as `job wait` names it."""
     if args.follow is not None:
         check_folder(args.follow)
     stream = sys.stderr if args.json else sys.stdout
-    report = _reporter(stream)
+    report = _reporter(stream, client._hidden)
     turn = client.ask(
         args.session_id,
         args.question,
@@ -760,7 +934,7 @@ def _ask(client: MatsyaClient, args: argparse.Namespace) -> list[str]:
         on_change=report,
         configuration_id=args.configuration_id,
     )
-    lines = _turn_lines(turn)
+    lines = _turn_lines(turn) + _credential_lines(client, args, turn, "turn")
     if args.follow is None:
         return lines
     started = _job_started(turn)
@@ -770,14 +944,14 @@ def _ask(client: MatsyaClient, args: argparse.Namespace) -> list[str]:
     # --json the command prints the turn's answer at its end
     answered = client.last_text
     if not args.json:
-        print("\n".join(lines), flush=True)
+        print(client._hidden("\n".join(lines)), flush=True)
     args.followed_job = started["id"]
     job = client.wait_job(
         started["id"],
         interval=JOB_INTERVAL if args.interval is None else args.interval,
         on_change=report,
     )
-    lines = _job_lines(job)
+    lines = _job_lines(job) + _status_credential(job)
     if isinstance(job.get("result"), dict):
         lines += _written_lines(client.job_files(started["id"], args.follow), args.follow)
     else:
@@ -859,7 +1033,8 @@ def _project_init(client: MatsyaClient, args: argparse.Namespace) -> list[str]:
 def _project_submit(client: MatsyaClient, args: argparse.Namespace) -> list[str]:
     """Whether `economics.md` was appended, the starting declaration and
     the files left out of it, the target and where it was read, then the
-    job's label and the line that follows the job."""
+    job's label and the line that follows the job, and for a job sent with
+    a personal Anthropic key its credential line (AMD-MAT-021 §2.5)."""
     answer = _project_answer(
         args,
         project.submit,
@@ -896,7 +1071,9 @@ def _project_submit(client: MatsyaClient, args: argparse.Namespace) -> list[str]
     where = "named by --target" if answer["target_named"] else "read from declaration/"
     lines.append(f"Target: {answer['target']}, {where}")
     job = answer["job"]
-    return lines + _label_lines(job) + _started_lines(job)
+    return (
+        lines + _label_lines(job) + _started_lines(job) + _credential_lines(client, args, job, "job")
+    )
 
 
 def _project_status(client: MatsyaClient, args: argparse.Namespace) -> list[str]:
@@ -1057,6 +1234,33 @@ def _configuration_set_default(client: MatsyaClient, args: argparse.Namespace) -
 # -- the user guide and the orientation
 
 
+def _key_line() -> str:
+    """The orientation's line after its Matsya-token line, which names the
+    credential that the next job, question or reply uses and never prints a
+    key (AMD-MAT-021 §2.5). Exactly one of three states applies, checked in
+    this order: BELLMAN_MATSYA_ANTHROPIC_KEY is set and nonempty; a key is
+    saved; no key is selected. When a key is selected and the selected
+    service address fails `key_destination_allowed`, the line adds that the
+    client refuses to send work with the key there or, under the operator's
+    testing override `key_over_http_accepted` (D-021-4), that it sends the
+    key unencrypted. The key file is not read."""
+    if os.environ.get(ANTHROPIC_KEY_VARIABLE):
+        line = KEY_FROM_VARIABLE
+    elif anthropic_key_file().is_file():
+        line = KEY_SAVED.format(file=anthropic_key_file())
+    else:
+        return NO_KEY
+    try:
+        address = load_config()["server"]
+    except (ValueError, OSError):
+        # an address that cannot be read is refused by every command
+        return line
+    if not key_destination_allowed(address):
+        plain = KEY_OVER_HTTP if key_over_http_accepted() else PLAIN_HTTP
+        line += " " + plain.format(address=address)
+    return line
+
+
 def _orientation_lines() -> list[str]:
     """What `bellman-matsya` alone prints, in Markdown (AMD-MAT-015 §2): what Matsya
     is and its three parts, in the words of the user guide's page
@@ -1064,8 +1268,10 @@ def _orientation_lines() -> list[str]:
     client whose commands it describes, the commands that print it as
     installed and as the client's public repository holds it today, and the
     command that upgrades the client; whether a Matsya token is saved on
-    this machine, never the Matsya token itself; in a project folder, the
-    folder's session, its latest job and the questions awaiting a reply
+    this machine, never the Matsya token itself, and on the next line the
+    credential that the next job, question or reply uses, never a key
+    (`_key_line`, AMD-MAT-021 §2.5); in a project folder, the folder's
+    session, its latest job and the questions awaiting a reply
     (`_project_orientation`); and the command that lists the commands."""
     saved = token_file()
     if saved is None:
@@ -1090,6 +1296,7 @@ def _orientation_lines() -> list[str]:
         f"`{UPGRADE}` updates the client and its installed guide.",
         "",
         token,
+        _key_line(),
         *_project_orientation(Path.cwd()),
         "",
         "`bellman-matsya --help` lists the commands.",
@@ -1167,8 +1374,111 @@ def _run_configure() -> None:
     print("Check your access with: bellman-matsya index")
 
 
+def _set_anthropic_key() -> None:
+    """`configure --set-anthropic-key` (AMD-MAT-021 §§2.1 and 2.2). A
+    personal key is an addition to a Matsya token: without a configured
+    Matsya token, saved by `configure` or set in BELLMAN_MATSYA_TOKEN, the
+    command prints `NO_TOKEN_FOR_KEY` and exits with status 1, before any
+    prompt and without writing anything, and an address that cannot be read
+    is reported as `configure` reports it. Otherwise it asks for the key at
+    a prompt that does not show it, never for the Matsya token; refuses a
+    key that is empty or holds a character an HTTP header does not allow
+    with `ENTERED_KEY_REFUSAL`; and saves the key in its owner-only file,
+    replacing a key saved before, then prints the file's path, the account
+    that is charged and how to remove the key. The key is never printed and
+    no service is contacted."""
+    try:
+        settings = load_config()
+    except (ValueError, OSError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    if not settings["token"]:
+        print(NO_TOKEN_FOR_KEY, file=sys.stderr)
+        sys.exit(1)
+    print("Matsya: save a personal Anthropic API key\n", flush=True)
+    try:
+        entered = getpass.getpass(KEY_PROMPT)
+    except EOFError:
+        # the end of the input is an empty key, which is refused below
+        entered = ""
+    except KeyboardInterrupt:
+        print("\nStopped; nothing was saved.", file=sys.stderr)
+        sys.exit(130)
+    try:
+        check_anthropic_key(entered)
+    except ValueError:
+        print(ENTERED_KEY_REFUSAL, file=sys.stderr)
+        sys.exit(1)
+    try:
+        path = save_anthropic_key(entered)
+    except OSError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    print(f"Personal Anthropic key saved to {path}")
+    if os.environ.get(ANTHROPIC_KEY_VARIABLE):
+        print(
+            "The environment variable BELLMAN_MATSYA_ANTHROPIC_KEY is set, and new jobs, questions "
+            "and replies that continue a job use its value in place of this key until it is unset."
+        )
+    else:
+        print(
+            "New jobs, questions and replies that continue a job use this key, and the Anthropic "
+            "account of this key is charged."
+        )
+    if not key_destination_allowed(settings["server"]):
+        plain = KEY_OVER_HTTP if key_over_http_accepted() else PLAIN_HTTP
+        print(plain.format(address=settings["server"]))
+    print("Remove it with: bellman-matsya configure --clear-anthropic-key")
+
+
+def _clear_anthropic_key() -> None:
+    """`configure --clear-anthropic-key` (AMD-MAT-021 §2.2): delete the file
+    of a saved personal key, which needs no Matsya token, since it only
+    removes a value; print whether a saved key was removed and which key the
+    next job or question uses."""
+    path = anthropic_key_file()
+    try:
+        removed = clear_anthropic_key()
+    except OSError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    if removed:
+        print(f"Removed the saved personal Anthropic key, {path}.")
+    else:
+        print(f"No personal Anthropic key was saved on this machine, in {path}; nothing was removed.")
+    if os.environ.get(ANTHROPIC_KEY_VARIABLE):
+        print(
+            "The environment variable BELLMAN_MATSYA_ANTHROPIC_KEY is set, and new jobs, questions "
+            "and replies that continue a job use its value until it is unset."
+        )
+    else:
+        print("New jobs and questions use the service's key.")
+
+
+def _selected_key() -> str | None:
+    """The personal Anthropic key the command sends, BELLMAN_MATSYA_ANTHROPIC_KEY
+    when it is set and nonempty, else the saved key, without its
+    surrounding whitespace, or None (AMD-MAT-021 §2.2). A selected key that
+    is empty or holds a character an HTTP header does not allow is refused
+    with the sentence that names its source and the remedy, and exit status
+    1, before the client is built; the key is not shown."""
+    value, source = selected_anthropic_key()
+    if value is None:
+        return None
+    try:
+        return check_anthropic_key(value)
+    except ValueError:
+        if source == "environment":
+            print(VARIABLE_KEY_REFUSAL, file=sys.stderr)
+        else:
+            print(FILE_KEY_REFUSAL.format(path=source), file=sys.stderr)
+        sys.exit(1)
+
+
 def _build_client() -> MatsyaClient:
-    """Use the saved token and selected address; refuse a missing token."""
+    """Use the saved token, the selected address and the selected personal
+    Anthropic key (`_selected_key`); refuse a missing token, and a selected
+    key that an HTTP header cannot carry."""
     try:
         cfg = load_config()
     except ConfigurationError as exc:
@@ -1182,7 +1492,7 @@ def _build_client() -> MatsyaClient:
             file=sys.stderr,
         )
         sys.exit(1)
-    return MatsyaClient(token=token, server_url=cfg["server"])
+    return MatsyaClient(token=token, server_url=cfg["server"], anthropic_api_key=_selected_key())
 
 
 # -- the parser
@@ -1243,7 +1553,39 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    commands.add_parser("configure", help="save your Matsya token")
+    configure = commands.add_parser(
+        "configure",
+        help="save your Matsya token; once it is saved, optionally a personal Anthropic API key",
+        description=(
+            "Save the Matsya token the service's administrator gave you; the command asks for "
+            "it and contacts no service. Once the Matsya token is configured, you may add a "
+            "personal Anthropic API key, whose Anthropic account is then charged for the jobs "
+            "and questions you start and for the replies that continue a job: --set-anthropic-key "
+            "saves it, and --clear-anthropic-key removes it. Neither option asks for the Matsya "
+            "token. The environment variable BELLMAN_MATSYA_ANTHROPIC_KEY supplies a key without "
+            "saving it, in place of a saved key; set it from a private file, "
+            'export BELLMAN_MATSYA_ANTHROPIC_KEY="$(cat <private file>)", and never type the '
+            "key on the command line."
+        ),
+    )
+    key_options = configure.add_mutually_exclusive_group()
+    key_options.add_argument(
+        "--set-anthropic-key",
+        action="store_true",
+        help=(
+            "optional, once the Matsya token is configured: ask for a personal Anthropic API key "
+            "at a prompt that does not show it, and save it in "
+            "~/.config/bellman-matsya/anthropic-key, readable by you alone"
+        ),
+    )
+    key_options.add_argument(
+        "--clear-anthropic-key",
+        action="store_true",
+        help=(
+            "remove the saved personal Anthropic key; new jobs and questions then use the "
+            "service's key, unless BELLMAN_MATSYA_ANTHROPIC_KEY is set"
+        ),
+    )
 
     index = commands.add_parser(
         "index", parents=[shared], help="the retrieval index and configuration the service reads"
@@ -1351,6 +1693,11 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     submit.add_argument("--source-cluster", metavar="CLUSTER", help="see --model-key")
+    submit.add_argument(
+        "--formulation",
+        metavar="TEXT",
+        help="the model to write when the source states several; at most 500 characters",
+    )
     submit.set_defaults(handler=_job_submit)
     status = job_commands.add_parser("status", parents=[shared], help="a job's state")
     status.add_argument("job_id", metavar="job")
@@ -1665,6 +2012,10 @@ def _check_arguments(parser: argparse.ArgumentParser, args: argparse.Namespace) 
         _check_configuration_option(parser, args.configuration_id)
         if (args.model_key is None) != (args.source_cluster is None):
             parser.error("--model-key and --source-cluster are given together or not at all")
+        try:
+            _check_formulation(args.formulation)
+        except ValueError as error:
+            parser.error(str(error))
     if args.command == "ask":
         _check_configuration_option(parser, args.configuration_id)
     if args.command == "configuration" and args.configuration_command == "set-default":
@@ -1716,6 +2067,14 @@ def _stopped(args: argparse.Namespace) -> str:
     return "Stopped."
 
 
+def _masked(client: MatsyaClient | None, text: str) -> str:
+    """The text with the Matsya token and the personal Anthropic key
+    replaced by `<Matsya token>` and `<Anthropic API key>` once the client
+    is built (AMD-MAT-021 §2.5); a message printed before it holds no
+    answer of the service."""
+    return text if client is None else client._hidden(text)
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the command that `argv`, or the command line, names, and return
     its exit status: 0 when it was carried out, 1 when the service refused
@@ -1725,10 +2084,17 @@ def main(argv: list[str] | None = None) -> int:
     as does a project command the client refuses (`ProjectRefusal`), whose
     one sentence is printed on standard error. With `--json`, a project
     command prints the answer the client composes (`bellman_matsya.project`), and
-    every other command the service's answer as it arrived. With no
-    command, print the orientation. At the first use of the client on this
-    machine, a command other than `docs` first prints the two lines of
-    `FIRST_USE`."""
+    every other command the service's answer as it arrived. New work sent
+    with a personal Anthropic key that the service accepted under its own
+    key is reported on standard error after that output, or after the
+    error that ended the command once the service had accepted the work,
+    and the command exits with status 1, or 130 when the user stopped it
+    (AMD-MAT-021 §2.5). Once the client
+    is built, every line printed for a person and every error pass through
+    the client's mask of the Matsya token and the personal key; the JSON
+    printed with `--json` is left as it is. With no command, print the
+    orientation. At the first use of the client on this machine, a command
+    other than `docs` first prints the two lines of `FIRST_USE`."""
     parser = _build_parser()
     args = parser.parse_args(argv)
     if args.command is None:
@@ -1751,34 +2117,60 @@ def main(argv: list[str] | None = None) -> int:
         # flushed, so that the two lines precede a refusal on standard error
         print(FIRST_USE, flush=True)
     if args.command == "configure":
-        _run_configure()
+        if args.set_anthropic_key:
+            _set_anthropic_key()
+        elif args.clear_anthropic_key:
+            _clear_anthropic_key()
+        else:
+            _run_configure()
         return 0
     _check_arguments(parser, args)
+    client: MatsyaClient | None = None
     try:
         if args.command == "project":
             _project_check(args)
         client = _build_client()
         lines = args.handler(client, args)
     except ProjectRefusal as error:
-        print(f"Error: {error}", file=sys.stderr)
+        print(_masked(client, f"Error: {error}"), file=sys.stderr)
         return 2
     except (MatsyaError, CommandError) as error:
-        print(f"Error: {error}", file=sys.stderr)
+        print(_masked(client, f"Error: {error}"), file=sys.stderr)
+        refusal = getattr(args, "credential_refusal", None)
+        if refusal:
+            # an error after the service accepted the work, such as a failed
+            # wait for the job a turn started, does not hide work that runs
+            # under the service's key (AMD-MAT-021 §2.5)
+            print("\n".join(refusal), file=sys.stderr)
         return 1
     except OSError as error:
         reason = f"{error.strerror}: {error.filename}" if error.strerror and error.filename else error
-        print(f"Error: {reason}", file=sys.stderr)
+        print(_masked(client, f"Error: {reason}"), file=sys.stderr)
+        refusal = getattr(args, "credential_refusal", None)
+        if refusal:
+            # nor does a folder that cannot be written (AMD-MAT-021 §2.5)
+            print("\n".join(refusal), file=sys.stderr)
         return 1
     except KeyboardInterrupt:
-        print(f"\n{_stopped(args)}", file=sys.stderr)
+        print(_masked(client, f"\n{_stopped(args)}"), file=sys.stderr)
+        refusal = getattr(args, "credential_refusal", None)
+        if refusal:
+            # a wait the user stopped does not hide work that runs under
+            # the service's key (AMD-MAT-021 §2.5)
+            print("\n".join(refusal), file=sys.stderr)
         return 130
     composed = getattr(args, "answer", None)
     if not args.json:
-        print("\n".join(lines))
+        print(client._hidden("\n".join(lines)))
     elif composed is not None:
         print(json.dumps(composed, ensure_ascii=False, indent=2))
     else:
         print(client.last_text)
+    refusal = getattr(args, "credential_refusal", None)
+    if refusal:
+        # the work runs under the service's key, not the holder's (AMD-MAT-021 §2.5)
+        print("\n".join(refusal), file=sys.stderr)
+        return 1
     return 0
 
 
